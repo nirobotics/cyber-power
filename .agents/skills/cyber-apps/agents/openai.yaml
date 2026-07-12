@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cyber Apps"
+  short_description: "NI internal Cyber App standards with Tailwind 4 template"
+  default_prompt: "Use $cyber-apps to create or update an NI Robotics internal Cyber App with the shared shell, Tailwind CSS 4 visual system, Feishu login, Supabase-backed permissions, and the bundled template."

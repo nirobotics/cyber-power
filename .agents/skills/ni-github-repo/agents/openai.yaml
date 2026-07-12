@@ -1,0 +1,4 @@
+interface:
+  display_name: "NI GitHub Repo"
+  short_description: "NI Robotics GitHub 仓库文档规范"
+  default_prompt: "使用 $ni-github-repo 规范 NI Robotics GitHub 仓库的 README 和基础说明。"

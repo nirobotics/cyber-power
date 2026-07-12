@@ -1,0 +1,4 @@
+- 仓库名 `cyber-power` 是用户批准的命名例外；保留现名，不因 `ni-github-repo` 的下划线规范重命名。
+- 解析器必须支持任何正确使用 NI EnergyLogger 的队伍日志；8214 和 9635 只是验证样例，不是兼容性白名单。
+- Supabase 只用于飞书登录身份映射和认证所需数据，不保存 `.wpilog`、分析结果或其他业务数据。
+- 部署优先使用 NI Corporate Vercel；Vercel 项目就绪后由用户协助配置 `power.team8214.com` 域名和 DNS。

@@ -1,0 +1,4 @@
+- Cyber Power 是面向 NI Robotics 及其他正确接入 NI EnergyLogger 的 FRC 队伍的浏览器端 `.wpilog` 能量分析工具，当前处于首轮实现阶段。
+- 项目治理使用 `cyber-apps`、`ni-github-repo` 和 `ni-memory`；三套项目级 skill vendoring 自 `nirobotics/agents` main 的 `23bb3897bae115a3ffa237a63ac9c47c1a79d88a`。
+- Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，仅承担飞书登录身份映射和认证所需数据；已登记飞书回调 `https://power.team8214.com/auth/feishu/callback`。
+- 生产优先部署到 NI Corporate Vercel；Vercel 项目尚待应用可部署后创建，随后由用户完成域名绑定和 DNS。

@@ -1,0 +1,4 @@
+interface:
+  display_name: "NI Memory"
+  short_description: "用 .memory 精简保存项目记忆、短期任务和交接状态"
+  default_prompt: "使用 $ni-memory 为当前项目建立或维护 .memory 记忆文件。"

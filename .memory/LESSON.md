@@ -1,0 +1,1 @@
+- Cyber Parts 的飞书 OAuth state、PKCE、组织校验、服务端 Cookie session 和 Supabase `user_profiles` 模式可复用；其服务端 Cookie 本身不提供离线认证，Cyber Power 的离线使用需由 PWA 静态壳和独立的本地授权策略处理。

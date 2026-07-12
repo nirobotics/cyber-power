@@ -1,0 +1,12 @@
+.memory/SCRUM.md
+node_modules/
+build/
+.react-router/
+.vercel/
+.env
+.env.*
+!.env.example
+coverage/
+playwright-report/
+test-results/
+*.local

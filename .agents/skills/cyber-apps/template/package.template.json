@@ -1,0 +1,47 @@
+{
+  "name": "replace-app-slug",
+  "private": true,
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "react-router dev",
+    "build": "react-router build",
+    "start": "react-router-serve ./build/server/index.js",
+    "typecheck": "react-router typegen && tsc",
+    "test": "vitest run",
+    "lint": "eslint ."
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2",
+    "@vercel/analytics": "^1",
+    "isbot": "^5",
+    "lucide-react": "^0",
+    "react": "^19",
+    "react-dom": "^19",
+    "react-router": "^7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10",
+    "@react-router/dev": "^7",
+    "@react-router/node": "^7",
+    "@react-router/serve": "^7",
+    "@tailwindcss/vite": "^4",
+    "@types/node": "^22",
+    "@types/react": "^19",
+    "@types/react-dom": "^19",
+    "@vercel/react-router": "^1",
+    "eslint": "^10",
+    "eslint-plugin-react-hooks": "^7",
+    "eslint-plugin-react-refresh": "^0",
+    "globals": "^17",
+    "tailwindcss": "^4",
+    "typescript": "^5",
+    "typescript-eslint": "^8",
+    "vite": "^8",
+    "vitest": "^4"
+  },
+  "engines": {
+    "node": "22.x"
+  },
+  "packageManager": "pnpm@11.5.0"
+}
