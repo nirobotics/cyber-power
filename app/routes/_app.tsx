@@ -1,20 +1,30 @@
 import { Activity } from "lucide-react";
-import { Outlet, useLocation, useNavigation } from "react-router";
+import { Outlet, redirect, useLocation, useNavigation } from "react-router";
 import type { Route } from "./+types/_app";
 import { AppShell } from "../components/app-shell";
 import { useAuth } from "../hooks/useAuth";
+import { AuthConfigurationError, requireCurrentUser, sanitizeReturnTo } from "../lib/auth.server";
 import { startFeishuLogin } from "../lib/feishu";
 
-export async function loader(_args: Route.LoaderArgs) {
-  return { user: null };
+export async function loader({ request }: Route.LoaderArgs) {
+  try {
+    await requireCurrentUser(request);
+    return { authenticated: true };
+  } catch (error) {
+    if (error instanceof AuthConfigurationError) {
+      const url = new URL(request.url);
+      const returnTo = sanitizeReturnTo(`${url.pathname}${url.search}`);
+      throw redirect(`/auth/login?returnTo=${encodeURIComponent(returnTo)}`);
+    }
+    throw error;
+  }
 }
 
-export default function AppLayout({ loaderData }: Route.ComponentProps) {
+export default function AppLayout() {
   const location = useLocation();
   const navigation = useNavigation();
   const busy = navigation.state !== "idle";
   const auth = useAuth();
-  const user = auth.user ?? loaderData.user;
 
   return (
     <AppShell
@@ -22,14 +32,14 @@ export default function AppLayout({ loaderData }: Route.ComponentProps) {
       appSubtitle="FRC Energy Analysis"
       centerTitle="Local WPILOG Analyzer"
       version="1.0.0"
-      user={user}
+      user={auth.user}
       authLoading={auth.loading}
-      allowGuest
+      allowGuest={false}
       busy={busy}
       onLogin={() => startFeishuLogin(location.pathname)}
       Icon={Activity}
     >
-      <Outlet context={{ user }} />
+      <Outlet context={{ user: auth.user }} />
     </AppShell>
   );
 }

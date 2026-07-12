@@ -10,6 +10,7 @@ import {
 } from "react-router";
 import type { Route } from "./+types/root";
 import stylesheet from "./app.css?url";
+import { PwaRegistration } from "./components/pwa-registration";
 import { themeBootstrapScript } from "./lib/theme";
 
 export const links: Route.LinksFunction = () => [
@@ -27,7 +28,7 @@ export const meta = () => [
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="zh-CN" suppressHydrationWarning>
+    <html lang="en" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -37,6 +38,7 @@ export function Layout({ children }: { children: ReactNode }) {
       </head>
       <body suppressHydrationWarning>
         {children}
+        <PwaRegistration />
         <Analytics mode={getAnalyticsMode()} />
         <ScrollRestoration />
         <Scripts />

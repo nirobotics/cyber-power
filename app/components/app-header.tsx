@@ -3,7 +3,8 @@ import { Boxes } from "lucide-react";
 import { NavLink } from "react-router";
 import { ThemeToggle } from "./theme-toggle";
 import { UserStatus } from "./user-status";
-import type { SessionUser } from "../lib/auth-types";
+import { OfflineStatus } from "./offline-status";
+import type { PublicUser } from "../lib/auth-types";
 
 export function AppHeader({
   appName,
@@ -19,7 +20,7 @@ export function AppHeader({
   appName: string;
   appSubtitle: string;
   centerTitle?: string | null;
-  user: SessionUser | null;
+  user: PublicUser | null;
   authLoading: boolean;
   allowGuest: boolean;
   onLogin: () => void;
@@ -28,13 +29,13 @@ export function AppHeader({
 }) {
   return (
     <header className="border-b border-[var(--border)] bg-[var(--panel)]">
-      <div className="grid w-full gap-2 px-3 py-3 sm:px-4">
+      <div className="grid w-full gap-2 px-3 py-2 sm:px-4">
         <div className="relative flex min-w-0 items-center gap-3">
           <NavLink
             to="/"
             className="flex min-w-0 flex-1 items-center gap-3 rounded-md transition hover:opacity-85 focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--panel)] md:flex-none md:basis-80"
           >
-            <div className="grid size-10 shrink-0 place-items-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
+            <div className="grid size-9 shrink-0 place-items-center rounded-md bg-[var(--accent)] text-[var(--accent-foreground)]">
               <Icon className="size-5" aria-hidden />
             </div>
             <div className="min-w-0">
@@ -59,6 +60,7 @@ export function AppHeader({
                 DEMO
               </NavLink>
             ) : null}
+            <OfflineStatus />
             <ThemeToggle className="shrink-0" />
             <UserStatus user={user} loading={authLoading} allowGuest={allowGuest} onLogin={onLogin} />
           </div>

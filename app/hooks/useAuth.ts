@@ -1,10 +1,10 @@
 import { useEffect, useState } from "react";
 import { fetchCurrentUser } from "../lib/feishu";
-import type { SessionUser } from "../lib/auth-types";
+import type { PublicUser } from "../lib/auth-types";
 
 export function useAuth() {
   const [loading, setLoading] = useState(true);
-  const [user, setUser] = useState<SessionUser | null>(null);
+  const [user, setUser] = useState<PublicUser | null>(null);
 
   useEffect(() => {
     let alive = true;

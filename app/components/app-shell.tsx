@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type { LucideIcon } from "lucide-react";
 import { AppFooter } from "./app-footer";
 import { AppHeader } from "./app-header";
-import type { SessionUser } from "../lib/auth-types";
+import type { PublicUser } from "../lib/auth-types";
 
 export function AppShell({
   appName,
@@ -23,7 +23,7 @@ export function AppShell({
   appSubtitle: string;
   centerTitle?: string | null;
   version: string;
-  user: SessionUser | null;
+  user: PublicUser | null;
   authLoading: boolean;
   allowGuest: boolean;
   busy: boolean;

@@ -1,4 +1,7 @@
-- Cyber Power 是面向 NI Robotics 及其他正确接入 NI EnergyLogger 的 FRC 队伍的浏览器端 `.wpilog` 能量分析工具，当前处于首轮实现阶段。
+- Cyber Power 是面向 NI Robotics 及其他正确接入 NI EnergyLogger 的 FRC 队伍的浏览器端 `.wpilog` 能量分析工具，当前已具备首轮应用骨架和服务端飞书认证。
 - 项目治理使用 `cyber-apps`、`ni-github-repo` 和 `ni-memory`；三套项目级 skill vendoring 自 `nirobotics/agents` main 的 `23bb3897bae115a3ffa237a63ac9c47c1a79d88a`。
-- Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，仅承担飞书登录身份映射和认证所需数据；已登记飞书回调 `https://power.team8214.com/auth/feishu/callback`。
-- 生产优先部署到 NI Corporate Vercel；Vercel 项目尚待应用可部署后创建，随后由用户完成域名绑定和 DNS。
+- 飞书认证入口为 `/auth/login`、`/auth/feishu/callback` 和 `/auth/logout`，使用 state、PKCE S256、14 天签名 HttpOnly Cookie、租户白名单和服务端 Supabase client；生产 callback 固定为 `https://power.team8214.com/auth/feishu/callback`。
+- Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，live 数据库只有 server-only 的 `public.user_profiles` 身份映射表；RLS/FORCE RLS 已开启，`anon` 与 `authenticated` 无表权限且无 policy。
+- 生产部署目标为 NI Corporate Vercel，域名 `power.team8214.com` 的 DNS 已指向 Vercel；代码和环境变量进入有效 production deployment 后才能完成域名验收。
+- WPILOG 解析、EnergyLogger 区间分析、Web Worker、CLI、交互式仪表盘、飞书认证和受限离线壳均已实现；真实私有金标日志不进入 Git。
+- 项目级 `cyber-power-log-analysis` skill 固化通用数据契约和金标，明确禁止按队号、ProjectName、赛季或固定子系统做兼容性判断。

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Cyber Power Log Analysis"
+  short_description: "Analyze NI EnergyLogger WPILOG files reliably"
+  default_prompt: "Use $cyber-power-log-analysis to inspect and validate an EnergyLogger WPILOG file."

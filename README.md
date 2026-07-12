@@ -1,13 +1,15 @@
 # cyber-power
 
 ![Next Innovation](https://img.shields.io/badge/Next-Innovation-8A2BE2?labelColor=555555&style=flat)
-![Lang zh-CN](https://img.shields.io/badge/Lang-zh--CN-2DBA4E?labelColor=555555&style=flat)
+![Node 22](https://img.shields.io/badge/Node-22-2DBA4E?labelColor=555555&style=flat)
 
 Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG 本地能量分析工具。
 
 ## 用途
 
-用户通过飞书组织账号登录后，在浏览器本地解析 `.wpilog`，查看电压、电流、功率、能量、Brownout、Driver Station 模式和动态子系统占比。原始日志不上传服务器。
+用户通过飞书组织账号登录后，在浏览器本地解析 `.wpilog`，查看电压、电流、功率、累计能量、Brownout、Driver Station 模式和动态子系统占比。原始日志不上传服务器。
+
+兼容性只取决于 WPILOG 1.0 与 NI EnergyLogger 数据契约，不限制队伍、赛季、ProjectName 或子系统命名。
 
 ## 目录
 
@@ -15,7 +17,9 @@ Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG
 - `.agents/skills/`：项目级 Cyber Apps、GitHub、Memory 和日志分析 skills。
 - `.memory/`：项目长期约束与当前状态；`SCRUM.md` 仅保留本地。
 - `supabase/`：仅飞书登录用户资料所需的数据库 migration。
-- `docs/design/`：已确认的产品界面设计依据。
+- `docs/architecture.md`：解析、认证、离线和存储边界。
+- `docs/validation.md`：真实日志金标与验收方法。
+- `docs/design/`：产品界面设计依据。
 
 ## 给人看的工具
 
@@ -33,12 +37,15 @@ pnpm dev
 
 浏览器打开开发服务器地址，登录飞书后选择 `.wpilog` 文件。日志和分析结果默认只存在于本机。
 
+必须配置 `.env.local` 中的 8 个服务端变量；含 secret 的值不能使用 `VITE_` 前缀。完整说明见 [架构文档](docs/architecture.md)。
+
 ## 给 AI 看的工具
 
 - 仓库根目录 `AGENTS.md`
 - `.agents/skills/cyber-apps/SKILL.md`
 - `.agents/skills/ni-github-repo/SKILL.md`
 - `.agents/skills/ni-memory/SKILL.md`
+- `.agents/skills/cyber-power-log-analysis/SKILL.md`
 
 ## 给 AI 看的使用方法
 
@@ -49,7 +56,13 @@ pnpm test
 pnpm build
 ```
 
-使用 `pnpm log:analyze -- <path-to-wpilog>` 执行日志金标验证；该命令将在解析器实现阶段加入。
+```powershell
+pnpm log:list -- "C:\path\robot.wpilog"
+pnpm log:analyze -- "C:\path\robot.wpilog"
+pnpm log:analyze -- "C:\path\robot.wpilog" --start 120 --end 135 --json
+```
+
+`log:list` 只检查容器并列出 entries；`log:analyze` 会校验 EnergyLogger 契约并计算指标。真实样例结果见 [验证文档](docs/validation.md)。
 
 ## 维护规则
 
@@ -57,3 +70,4 @@ pnpm build
 - Supabase 仅用于飞书登录用户资料，不保存日志、分析结果或业务历史。
 - 不提交任何服务端 secret、`.env.local`、原始 WPILOG 或本地 SCRUM。
 - 生产入口为 `https://power.team8214.com`。
+- 已认证页面缓存最多 7 天，用于同一浏览器配置下的离线本地分析；缓存壳不含姓名、头像、飞书 ID 或 Supabase ID。

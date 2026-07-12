@@ -1,6 +1,7 @@
 import { LogIn, LogOut } from "lucide-react";
-import { NavLink } from "react-router";
-import type { SessionUser } from "../lib/auth-types";
+import { useRef } from "react";
+import type { PublicUser } from "../lib/auth-types";
+import { clearOfflineShell } from "../lib/pwa";
 
 export function UserStatus({
   user,
@@ -9,12 +10,15 @@ export function UserStatus({
   onLogin,
   logoutHref = "/auth/logout",
 }: {
-  user: SessionUser | null;
+  user: PublicUser | null;
   loading: boolean;
   allowGuest: boolean;
   onLogin: () => void;
   logoutHref?: string;
 }) {
+  const formRef = useRef<HTMLFormElement>(null);
+  const submittingRef = useRef(false);
+
   if (loading) {
     return (
       <div className="grid size-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--panel)]">
@@ -53,14 +57,28 @@ export function UserStatus({
         )}
         <span className="hidden max-w-32 truncate sm:inline">{user.displayName}</span>
       </div>
-      <NavLink
-        to={logoutHref}
-        className="grid size-9 shrink-0 place-items-center rounded-md text-[var(--muted)] transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
-        aria-label="Logout"
-        title="Logout"
+      <form
+        ref={formRef}
+        method="post"
+        action={logoutHref}
+        onSubmit={(event) => {
+          if (submittingRef.current) return;
+          event.preventDefault();
+          void clearOfflineShell().finally(() => {
+            submittingRef.current = true;
+            formRef.current?.requestSubmit();
+          });
+        }}
       >
-        <LogOut className="size-4" aria-hidden />
-      </NavLink>
+        <button
+          type="submit"
+          className="grid size-9 shrink-0 place-items-center rounded-md text-[var(--muted)] transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
+          aria-label="Logout"
+          title="Logout"
+        >
+          <LogOut className="size-4" aria-hidden />
+        </button>
+      </form>
     </>
   );
 }
