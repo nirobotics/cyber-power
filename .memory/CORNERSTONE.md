@@ -4,11 +4,11 @@
 - 飞书认证使用 OAuth v2、state、PKCE S256、tenant 白名单、14 天签名 HttpOnly Cookie 与最小公开用户 DTO；生产 callback 固定为 `https://power.team8214.com/auth/feishu/callback`，真实组织账号已通过生产登录验收。
 - Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，只保存 server-only 的 `public.user_profiles` 身份映射；RLS/FORCE RLS 开启，浏览器角色无表权限且无 policy。
 - NI Corporate Vercel 项目 `cyber-power` 使用 React Router 与 Node 22，Git Integration 跟踪 GitHub `main`；`https://power.team8214.com` 已指向 Ready production deployment。
-- 分析界面固定为“整机 / 子系统 / 数据质量”三页：整机为总指标、独立图例 Card，以及分别位于独立 Card 的电压、总电流、总功率、累计能量四图，电池电压纵轴固定为 `3–13.5 V`；顶部“有效持续时间”在 Enabled 可用时排除 Disabled，缺失 Enabled 时回退完整选区；子系统为能量占比、独立功率/电流/能量图和默认折叠的层级明细；数据质量为左侧可信日志范围与右侧验证结果。
-- 未读取日志、解析中或替换文件后的浏览器标题只显示 `cyber-power`；分析完成后采用“当前导航页名 | cyber-power”，并随“整机 / 子系统 / 数据质量”导航实时切换。
+- 分析界面固定为“整机 / 子系统 / 模拟 / 数据质量”四页：整机为总指标、独立图例 Card，以及分别位于独立 Card 的电压、总电流、总功率、累计能量四图，电池电压纵轴固定为 `3–13.5 V`；顶部“有效持续时间”在 Enabled 可用时排除 Disabled，缺失 Enabled 时回退完整选区；子系统为能量占比、独立功率/电流/能量图和默认折叠的层级明细；模拟页只显示 Supply Current 配置与报告，不绘制专用图表、不改变原图表；数据质量为左侧可信日志范围与右侧验证结果。
+- 未读取日志、解析中或替换文件后的浏览器标题只显示 `cyber-power`；分析完成后采用“当前导航页名 | cyber-power”，并随“整机 / 子系统 / 模拟 / 数据质量”导航实时切换。
 - 所有时间序列图共享同一固定游标、悬停临时预览、时间范围与 AUTO/TELEOP/BROWNOUT 背景：悬停只覆盖图表显示，移出恢复固定值，只有图表点击、底部游标操作或峰值定位提交固定值。默认范围按 Practice AUTO、非 Practice AUTO、非 Practice 有效模式的顺序选起点，并以最后有效模式结束，端点在拖动时吸附 Robot Mode 边界。底部 fixed 组件是唯一范围拖动入口，标准 Teleop 显示为 TELEOP，无法推断具体模式的 generic enabled 保留 ENABLED，并在每次 Brownout 开始时刻按完整日志坐标绘制固定像素红色叉号；图表不接管页面滚轮，电压图包含 Brownout 阈值线，峰值功率/电流卡可定位到精确时间且不会改变当前导航页。
 - 解析器支持旧版 EnergyLogger 用单个尾随 `/` 标记聚合节点；前导/重复分隔符、中间空段、尾随连字符和规范化冲突仍必须 fatal，仅最后一条不完整 record 可降级恢复。
 - Driver Station 模式使用标准 AdvantageKit 的 Enabled、Autonomous、Test 与 int64 MatchType；Teleop 由三项布尔状态推导，MatchType 仅在原始值变化时切分区间，缺少 Enabled 时不伪造模式。
 - 平均功率在日志包含 `Enabled` 序列时仅统计选区内 Enabled 区间的能量与时长；全 Disabled 返回 0，缺少 `Enabled` 时回退到完整选区。总能量、占比、峰值与调和结果仍按完整选区计算。
-- 子系统页提供多目标 Supply Current 历史反事实回放：上限是 EnergyLogger 节点合计 Supply Current；终端节点可直接使用，带子节点的同构聚合组必须由用户确认；同一方案的启用目标必须互不重复且不存在祖先/后代重叠。电流与功率按 sample-and-hold 比例缩放，累计能量只缩放正增量并分段处理 reset，整机结果保留未选中负载残差，平均功率沿用 Enabled-only 口径。该模型不预测 Stator Current、电池电压、Brownout、机构动作或动作耗时。
-- 2026-07-13 在 Node 22.23.1 / pnpm 11.5.0 下 143 项测试、typecheck、lint、生产 build 与 PWA 生成通过；59.6 MiB 金标及两份尾随 `/` hopper 日志完整解析均无 fatal，默认模式范围分别为 `187.593231–420.606922s`、`129.761164–293.815472s`、`210.291942–374.910003s`。三份日志的双目标限流回放均满足顺序不变、高限零变化和峰值不越限，估算耗时分别为 `23.6ms`、`11.4ms`、`12.6ms`；金标默认选区完整时长 `233.013691s`、有效时长 `222.133652s`、Brownout `41` 次、Enabled-only 平均功率 `1359.116 W`。
+- 独立“模拟”页提供多目标 Supply Current 历史反事实回放：上限是 EnergyLogger 节点合计 Supply Current；终端节点可直接使用，带子节点的同构聚合组必须由用户确认；同一模拟的启用目标必须互不重复且不存在祖先/后代重叠。配置只有一份实时状态，关闭总开关保留所有行和值但不显示报告，开启后有效修改立即原子重算，无效配置不保留旧结果；页面不显示限流图表。电流与功率按 sample-and-hold 比例缩放，累计能量只缩放正增量并分段处理 reset，整机结果保留未选中负载残差，平均功率沿用 Enabled-only 口径。该模型不预测 Stator Current、电池电压、Brownout、机构动作或动作耗时。
+- 2026-07-13 在 Node 22.23.1 / pnpm 11.5.0 下 138 项测试、typecheck、lint、生产 build 与 PWA 生成通过；59.6 MiB 金标及两份尾随 `/` hopper 日志完整解析均无 fatal，默认模式范围分别为 `187.593231–420.606922s`、`129.761164–293.815472s`、`210.291942–374.910003s`。三份日志的双目标限流回放均满足顺序不变、高限零变化和峰值不越限，估算耗时分别为 `23.6ms`、`11.4ms`、`12.6ms`；金标默认选区完整时长 `233.013691s`、有效时长 `222.133652s`、Brownout `41` 次、Enabled-only 平均功率 `1359.116 W`。

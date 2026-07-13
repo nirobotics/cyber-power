@@ -55,55 +55,7 @@ export function supplyLimitDraftsToInputs(drafts: readonly SupplyLimitDraft[]): 
     });
   }
 
-  if (inputs.length === 0 && errors.length === 0) {
-    errors.push({ message: "请至少启用一个限流目标。" });
-  }
   return { inputs, errors };
-}
-
-export function supplyLimitInputsToDrafts(
-  inputs: readonly SupplyCurrentLimitInput[],
-): SupplyLimitDraft[] {
-  return inputs
-    .filter((input) => input.enabled !== false)
-    .map((input) => ({
-      nodeId: input.nodeId,
-      enabled: true,
-      limitText: String(input.limitA),
-      aggregateConfirmed: input.aggregateConfirmed === true,
-    }));
-}
-
-export function supplyLimitDraftsMatchInputs(
-  drafts: readonly SupplyLimitDraft[],
-  inputs: readonly SupplyCurrentLimitInput[],
-): boolean {
-  const activeDrafts = drafts.filter((draft) => draft.enabled);
-  const activeInputs = inputs.filter((input) => input.enabled !== false);
-  if (activeDrafts.length === 0 && activeInputs.length === 0) return true;
-  const normalizedDrafts = supplyLimitDraftsToInputs(drafts);
-  if (normalizedDrafts.errors.length > 0) return false;
-
-  const left = [...normalizedDrafts.inputs].sort(compareInputs);
-  const right = [...activeInputs].sort(compareInputs);
-  if (left.length !== right.length) return false;
-  return left.every((input, index) => {
-    const other = right[index];
-    return input.nodeId === other.nodeId &&
-      input.limitA === other.limitA &&
-      input.aggregateConfirmed === (other.aggregateConfirmed === true);
-  });
-}
-
-export function normalizeAppliedSupplyLimitDrafts(
-  drafts: readonly SupplyLimitDraft[],
-  inputs: readonly SupplyCurrentLimitInput[],
-): SupplyLimitDraft[] {
-  const normalizedById = new Map(
-    supplyLimitInputsToDrafts(inputs).map((draft) => [draft.nodeId, draft]),
-  );
-  return drafts.map((draft) =>
-    draft.enabled ? normalizedById.get(draft.nodeId) ?? draft : { ...draft });
 }
 
 export function supplyLimitIssuesToDisplay(
@@ -121,8 +73,4 @@ function missingSeriesReason(node: EnergyLogDataset["subsystems"][number]) {
   if (node.powerW.values.length === 0) return "该节点没有有效的功率样本。";
   if (node.energyWh.values.length === 0) return "该节点没有有效的累计能量样本。";
   return undefined;
-}
-
-function compareInputs(left: SupplyCurrentLimitInput, right: SupplyCurrentLimitInput) {
-  return left.nodeId.localeCompare(right.nodeId);
 }

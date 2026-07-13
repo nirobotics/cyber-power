@@ -1,16 +1,12 @@
 import {
   AlertTriangle,
   Check,
+  CircleHelp,
   Plus,
-  RotateCcw,
-  Search,
   Trash2,
 } from "lucide-react";
-import { useMemo, useState } from "react";
-import type {
-  SupplyCurrentLimitInput,
-  SupplyLimitEstimate,
-} from "../log-analysis/core";
+import { useMemo, useRef, useState } from "react";
+import type { SupplyLimitEstimate } from "../log-analysis/core";
 import { formatDuration, formatNumber } from "./format";
 
 export interface SupplyLimitTargetOption {
@@ -44,20 +40,14 @@ export type SupplyLimitDraftPatch = Partial<
 export interface SupplyLimitSimulatorProps {
   targets: readonly SupplyLimitTargetOption[];
   draftLimits: readonly SupplyLimitDraft[];
-  appliedLimits: readonly SupplyCurrentLimitInput[];
   errors: readonly SupplyLimitDisplayError[];
-  estimateErrors?: readonly SupplyLimitDisplayError[];
   estimate: SupplyLimitEstimate | null;
-  selectedTargetId: string | null;
-  hasUnappliedChanges: boolean;
-  isApplying?: boolean;
+  simulationEnabled: boolean;
+  onSimulationEnabledChange: (enabled: boolean) => void;
   onAddTarget: (nodeId: string) => void;
   onUpdateDraft: (nodeId: string, patch: SupplyLimitDraftPatch) => void;
   onRemoveTarget: (nodeId: string) => void;
-  onApply: () => void;
-  onRevert: () => void;
   onClear: () => void;
-  onSelectTarget: (nodeId: string) => void;
 }
 
 export interface SupplyLimitHierarchyConflict {
@@ -134,22 +124,15 @@ export function findSupplyLimitHierarchyConflicts(
 export function SupplyLimitSimulator({
   targets,
   draftLimits,
-  appliedLimits,
   errors,
-  estimateErrors = [],
   estimate,
-  selectedTargetId,
-  hasUnappliedChanges,
-  isApplying = false,
+  simulationEnabled,
+  onSimulationEnabledChange,
   onAddTarget,
   onUpdateDraft,
   onRemoveTarget,
-  onApply,
-  onRevert,
   onClear,
-  onSelectTarget,
 }: SupplyLimitSimulatorProps) {
-  const [search, setSearch] = useState("");
   const targetById = useMemo(
     () => new Map(targets.map((target) => [target.id, target])),
     [targets],
@@ -158,24 +141,10 @@ export function SupplyLimitSimulator({
     () => new Set(draftLimits.map((limit) => limit.nodeId)),
     [draftLimits],
   );
-  const appliedById = useMemo(
-    () => new Map(appliedLimits.map((limit) => [limit.nodeId, limit])),
-    [appliedLimits],
-  );
-  const normalizedSearch = search.trim().toLocaleLowerCase();
   const orderedTargets = useMemo(() => orderSupplyLimitTargets(targets), [targets]);
-  const matchingTargets = useMemo(
-    () => orderedTargets.filter(
-      (target) =>
-        !draftIds.has(target.id) &&
-        (normalizedSearch.length === 0 ||
-          target.rawPath.toLocaleLowerCase().includes(normalizedSearch)),
-    ),
-    [draftIds, normalizedSearch, orderedTargets],
-  );
-  const addableTargets = useMemo(
-    () => matchingTargets.slice(0, 12),
-    [matchingTargets],
+  const availableTargets = useMemo(
+    () => orderedTargets.filter((target) => !draftIds.has(target.id)),
+    [draftIds, orderedTargets],
   );
   const hierarchyConflicts = useMemo(
     () => findSupplyLimitHierarchyConflicts(targets, draftLimits),
@@ -217,11 +186,7 @@ export function SupplyLimitSimulator({
   const hasErrors =
     errors.length > 0 || hierarchyConflicts.length > 0 || hasInvalidDraft;
   const enabledDraftCount = draftLimits.filter((limit) => limit.enabled).length;
-  const canApply =
-    hasUnappliedChanges &&
-    enabledDraftCount > 0 &&
-    !hasErrors &&
-    !isApplying;
+  const canEnableSimulation = enabledDraftCount > 0 && !hasErrors;
 
   return (
     <div className="grid gap-2.5">
@@ -230,78 +195,64 @@ export function SupplyLimitSimulator({
         aria-labelledby="supply-limit-editor-title"
       >
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
-          <div className="flex min-w-0 items-center gap-2">
-            <h2
-              id="supply-limit-editor-title"
-              className="text-sm font-semibold text-ink"
-            >
-              多子系统 Supply 电流限流方案
-            </h2>
-            <span className="badge border-line text-ink-dim">
-              {enabledDraftCount} 个启用目标
-            </span>
-            {hasUnappliedChanges ? (
-              <span className="badge border-warn/50 text-warn">存在未应用修改</span>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            className="btn"
-            onClick={onClear}
-            disabled={draftLimits.length === 0 && appliedLimits.length === 0}
+          <h2
+            id="supply-limit-editor-title"
+            className="text-sm font-semibold text-ink"
           >
-            <Trash2 className="size-3.5" aria-hidden />
-            清空方案
-          </button>
-        </div>
-
-        <div className="border-b border-line bg-surface-2/40 px-4 py-3 text-xs text-ink-dim">
-          <p>
-            输入值是对应 EnergyLogger 记录项的总 Supply 电流上限，不是单台电机控制器的限流配置。
-          </p>
-          <p className="mt-1">
-            估算保持历史动作时长和电池电压轨迹不变，不重新预测最低电压或 Brownout。
-          </p>
-        </div>
-
-        <div className="grid gap-3 border-b border-line px-4 py-3 lg:grid-cols-[minmax(0,420px)_1fr]">
-          <div>
-            <label
-              htmlFor="supply-limit-target-search"
-              className="mb-1.5 block text-xs font-medium text-ink"
+            限流模拟
+          </h2>
+          <div className="flex items-center gap-2">
+            <button
+              type="button"
+              role="switch"
+              aria-checked={simulationEnabled}
+              aria-label={simulationEnabled ? "关闭限流模拟" : "启用限流模拟"}
+              title={simulationEnabled ? "关闭限流模拟" : "启用限流模拟"}
+              disabled={!simulationEnabled && !canEnableSimulation}
+              onClick={() => onSimulationEnabledChange(!simulationEnabled)}
+              className={[
+                "relative h-6 w-11 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
+                simulationEnabled ? "bg-brand" : "bg-line-strong",
+              ].join(" ")}
             >
-              添加限流目标
-            </label>
-            <div className="relative">
-              <Search
-                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-ink-faint"
+              <span
+                className={[
+                  "absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-transform",
+                  simulationEnabled ? "translate-x-5" : "translate-x-0.5",
+                ].join(" ")}
                 aria-hidden
               />
-              <input
-                id="supply-limit-target-search"
-                type="search"
-                value={search}
-                onChange={(event) => setSearch(event.currentTarget.value)}
-                className="input pl-9"
-                placeholder="搜索 EnergyLogger 路径"
-                autoComplete="off"
-              />
-            </div>
-            <ul
-              className="mt-1.5 max-h-44 overflow-y-auto rounded-md border border-line bg-surface"
-              aria-label="可添加的限流目标"
+            </button>
+            <button
+              type="button"
+              className="grid size-8 place-items-center rounded-md text-ink-faint outline-none transition hover:bg-danger/10 hover:text-danger focus-visible:ring-2 focus-visible:ring-danger/40"
+              onClick={onClear}
+              disabled={draftLimits.length === 0}
+              aria-label="清空限流模拟"
+              title="清空限流模拟"
             >
-              {addableTargets.length === 0 ? (
-                <li className="px-3 py-4 text-center text-xs text-ink-faint">
-                  {draftLimits.length === targets.length
-                    ? "所有可用节点均已加入方案。"
-                    : "没有匹配的 EnergyLogger 路径。"}
-                </li>
-              ) : (
-                addableTargets.map((target) => {
+              <Trash2 className="size-4" aria-hidden />
+            </button>
+          </div>
+        </div>
+
+        <div className="border-b border-line px-4 py-3">
+          <ul
+            className="grid max-h-56 overflow-y-auto rounded-md border border-line bg-surface sm:grid-cols-2 xl:grid-cols-3"
+            aria-label="可添加的限流目标"
+          >
+            {availableTargets.length === 0 ? (
+              <li className="px-3 py-4 text-center text-xs text-ink-faint sm:col-span-2 xl:col-span-3">
+                所有可用节点均已加入模拟。
+              </li>
+            ) : (
+              availableTargets.map((target) => {
                   const aggregate = target.childrenIds.length > 0;
                   return (
-                    <li key={target.id} className="border-b border-line/70 last:border-b-0">
+                    <li
+                      key={target.id}
+                      className="border-b border-line/70 sm:border-r sm:[&:nth-child(2n)]:border-r-0 xl:[&:nth-child(2n)]:border-r xl:[&:nth-child(3n)]:border-r-0"
+                    >
                       <button
                         type="button"
                         className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none transition hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
@@ -335,30 +286,11 @@ export function SupplyLimitSimulator({
                     </li>
                   );
                 })
-              )}
-            </ul>
-            {matchingTargets.length > addableTargets.length ? (
-              <p className="mt-1 text-[10px] text-ink-faint">
-                当前显示前 {addableTargets.length} 项，共 {matchingTargets.length} 项；继续输入路径可缩小范围。
-              </p>
-            ) : null}
-          </div>
-
-          <div className="self-end text-xs text-ink-dim">
-            <p>
-              顶层终端节点（例如只有一个 EnergyLogger 记录项的电机组）可以直接配置组总电流上限。
-            </p>
-            <p className="mt-1">
-              带下级节点的聚合路径需要确认其代表同构电机组；同一方案不能同时包含祖先和后代节点。
-            </p>
-          </div>
+            )}
+          </ul>
         </div>
 
-        {draftLimits.length === 0 ? (
-          <div className="px-4 py-10 text-center text-sm text-ink-dim">
-            搜索并添加一个或多个 EnergyLogger 节点开始估算。
-          </div>
-        ) : (
+        {draftLimits.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full min-w-[980px] text-left text-xs">
               <thead className="bg-surface-2 text-[10px] uppercase tracking-wider text-ink-faint">
@@ -384,16 +316,12 @@ export function SupplyLimitSimulator({
                     nodeErrors.length > 0 ||
                     (draft.enabled && parsedLimit === null) ||
                     Boolean(target?.unavailableReason);
-                  const applied = appliedById.get(draft.nodeId);
                   const statusId = `supply-limit-status-${rowIndex}`;
                   const errorId = nodeErrors.length > 0 || conflict
                     ? `supply-limit-errors-${rowIndex}`
                     : undefined;
                   return (
-                    <tr
-                      key={draft.nodeId}
-                      className={selectedTargetId === draft.nodeId ? "bg-brand/5" : "hover:bg-surface-2/60"}
-                    >
+                    <tr key={draft.nodeId} className="hover:bg-surface-2/60">
                       <td className="px-4 py-3 text-center align-top">
                         <input
                           type="checkbox"
@@ -408,28 +336,18 @@ export function SupplyLimitSimulator({
                         />
                       </td>
                       <td className="max-w-[340px] px-3 py-3 align-top">
-                        <button
-                          type="button"
-                          className="block max-w-full truncate font-mono text-ink outline-none hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-default disabled:text-ink-faint"
-                          onClick={() => onSelectTarget(draft.nodeId)}
-                          disabled={!applied}
+                        <span
+                          className="block max-w-full truncate font-mono text-ink"
                           title={target?.rawPath ?? draft.nodeId}
-                          aria-pressed={selectedTargetId === draft.nodeId}
-                          aria-label={applied
-                            ? `查看${target?.rawPath ?? draft.nodeId}已应用结果`
-                            : `${target?.rawPath ?? draft.nodeId}尚未应用`}
                         >
                           {target?.rawPath ?? draft.nodeId}
-                        </button>
+                        </span>
                         <span className="mt-1 block text-[10px] text-ink-faint">
                           {aggregate
                             ? "聚合节点"
                             : target?.parentId === null
                               ? "顶层终端电机组"
                               : "叶节点"}
-                          {applied
-                            ? ` · 已应用 ${formatNumber(applied.limitA, 1)} A`
-                            : " · 尚未应用"}
                         </span>
                         {nodeErrors.map((message) => (
                           <span key={message} className="mt-1 block text-[10px] text-danger">
@@ -472,11 +390,6 @@ export function SupplyLimitSimulator({
                                 limitText: event.currentTarget.value,
                               })
                             }
-                            onKeyDown={(event) => {
-                              if (event.key !== "Enter" || !canApply) return;
-                              event.preventDefault();
-                              onApply();
-                            }}
                             className="input py-1.5 pr-8"
                             aria-invalid={inputInvalid || undefined}
                             aria-describedby={[statusId, errorId].filter(Boolean).join(" ")}
@@ -518,6 +431,7 @@ export function SupplyLimitSimulator({
                             hasError={inputInvalid || Boolean(conflict)}
                             aggregateConfirmationMissing={aggregate && !draft.aggregateConfirmed}
                             parsedLimit={parsedLimit}
+                            simulationEnabled={simulationEnabled && estimate !== null}
                           />
                         </span>
                       </td>
@@ -538,7 +452,7 @@ export function SupplyLimitSimulator({
               </tbody>
             </table>
           </div>
-        )}
+        ) : null}
 
         {hierarchyConflicts.length > 0 || globalErrors.length > 0 ? (
           <div className="border-t border-danger/40 bg-danger/5 px-4 py-3 text-xs text-danger" role="alert">
@@ -547,7 +461,7 @@ export function SupplyLimitSimulator({
               <div>
                 {hierarchyConflicts.map((conflict) => (
                   <p key={`${conflict.ancestorId}:${conflict.descendantId}`}>
-                    不能同时应用「{targetById.get(conflict.ancestorId)?.rawPath ?? conflict.ancestorId}」和其下级「
+                    不能同时模拟「{targetById.get(conflict.ancestorId)?.rawPath ?? conflict.ancestorId}」和其下级「
                     {targetById.get(conflict.descendantId)?.rawPath ?? conflict.descendantId}」。
                   </p>
                 ))}
@@ -558,46 +472,10 @@ export function SupplyLimitSimulator({
             </div>
           </div>
         ) : null}
-
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-line px-4 py-3">
-          <button
-            type="button"
-            className="btn"
-            onClick={onRevert}
-            disabled={!hasUnappliedChanges || isApplying}
-          >
-            <RotateCcw className="size-3.5" aria-hidden />
-            撤销未应用修改
-          </button>
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={onApply}
-            disabled={!canApply}
-          >
-            {isApplying ? "正在估算…" : "应用方案"}
-          </button>
-        </div>
       </section>
 
-      {estimateErrors.length > 0 ? (
-        <section className="card border-danger/50 px-4 py-3 text-xs text-danger" role="alert">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-            <div>
-              {estimateErrors.map((error, index) => <p key={`${index}:${error.message}`}>{error.message}</p>)}
-            </div>
-          </div>
-        </section>
-      ) : null}
-
-      {estimate ? (
-        <SupplyLimitResults
-          estimate={estimate}
-          selectedTargetId={selectedTargetId}
-          onSelectTarget={onSelectTarget}
-        />
-      ) : null}
+      {simulationEnabled && estimate ? <SupplyLimitResults estimate={estimate} /> : null}
+      <SupplyLimitHelp />
     </div>
   );
 }
@@ -608,12 +486,14 @@ function LimitStatus({
   parsedLimit,
   hasError,
   aggregateConfirmationMissing,
+  simulationEnabled,
 }: {
   draft: SupplyLimitDraft;
   peakCurrentA: number | undefined;
   parsedLimit: number | null;
   hasError: boolean;
   aggregateConfirmationMissing: boolean;
+  simulationEnabled: boolean;
 }) {
   if (!draft.enabled) return <span className="text-[11px] text-ink-faint">未启用</span>;
   if (hasError) return <span className="text-[11px] text-danger">需要修正</span>;
@@ -629,18 +509,14 @@ function LimitStatus({
   if (peakCurrentA !== undefined && parsedLimit >= peakCurrentA) {
     return <span className="text-[11px] text-ink-faint">当前范围不会触发</span>;
   }
-  return <span className="text-[11px] text-ok">预计会触发</span>;
+  return (
+    <span className="text-[11px] text-ok">
+      {simulationEnabled ? "模拟中" : "预计会触发"}
+    </span>
+  );
 }
 
-function SupplyLimitResults({
-  estimate,
-  selectedTargetId,
-  onSelectTarget,
-}: {
-  estimate: SupplyLimitEstimate;
-  selectedTargetId: string | null;
-  onSelectTarget: (nodeId: string) => void;
-}) {
+function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
   const { totals } = estimate;
   const globalWarnings = estimate.warnings.filter((warning) => warning.nodeId === undefined);
   return (
@@ -651,7 +527,7 @@ function SupplyLimitResults({
     >
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
         <h2 id="supply-limit-results-title" className="text-sm font-semibold text-ink">
-          限流估算结果
+          限流模拟报告
         </h2>
         <span className="text-[10px] text-ink-faint">
           固定历史时间轴 · {totals.activeTargetCount} 个目标
@@ -725,20 +601,11 @@ function SupplyLimitResults({
           </thead>
           <tbody className="divide-y divide-line">
             {estimate.targets.map((target) => (
-              <tr
-                key={target.nodeId}
-                className={selectedTargetId === target.nodeId ? "bg-brand/5" : "hover:bg-surface-2/60"}
-              >
+              <tr key={target.nodeId} className="hover:bg-surface-2/60">
                 <td className="max-w-[360px] px-4 py-2.5">
-                  <button
-                    type="button"
-                    onClick={() => onSelectTarget(target.nodeId)}
-                    className="block max-w-full truncate font-mono text-ink outline-none hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/50"
-                    title={target.rawPath}
-                    aria-pressed={selectedTargetId === target.nodeId}
-                  >
+                  <span className="block max-w-full truncate font-mono text-ink" title={target.rawPath}>
                     {target.rawPath}
-                  </button>
+                  </span>
                 </td>
                 <td className="px-3 py-2.5 text-right font-mono text-ink">
                   {formatNumber(target.limitA, 1)} A
@@ -776,11 +643,75 @@ function SupplyLimitResults({
           ))}
         </div>
       ) : null}
-
-      <div className="border-t border-line bg-surface-2/40 px-4 py-3 text-[11px] leading-5 text-ink-dim">
-        这是固定历史时间轴下的 Supply 电流裁剪估算；电池电压、Brownout、动作时长、Stator Current、扭矩与温升均未重新预测。
-      </div>
     </section>
+  );
+}
+
+function SupplyLimitHelp() {
+  const [open, setOpen] = useState(false);
+  const pointerTypeRef = useRef<string | null>(null);
+  return (
+    <aside className="relative flex justify-end" aria-label="限流模拟说明">
+      <div
+        className="relative"
+        onMouseEnter={() => setOpen(true)}
+        onMouseLeave={(event) => {
+          if (event.currentTarget.contains(document.activeElement)) return;
+          setOpen(false);
+        }}
+      >
+        <button
+          type="button"
+          className="grid size-9 place-items-center rounded-full border border-line bg-surface text-ink-dim shadow-sm outline-none transition hover:border-brand/50 hover:text-brand focus-visible:ring-2 focus-visible:ring-brand/50"
+          aria-label="查看限流模拟说明"
+          aria-describedby="supply-limit-help-content"
+          aria-expanded={open}
+          onPointerDown={(event) => {
+            pointerTypeRef.current = event.pointerType;
+          }}
+          onClick={() => {
+            if (pointerTypeRef.current === "touch" || pointerTypeRef.current === "pen") {
+              setOpen((current) => !current);
+              return;
+            }
+            setOpen(true);
+          }}
+          onFocus={() => {
+            if (pointerTypeRef.current !== "touch" && pointerTypeRef.current !== "pen") {
+              setOpen(true);
+            }
+          }}
+          onBlur={() => {
+            pointerTypeRef.current = null;
+            setOpen(false);
+          }}
+          onKeyDown={(event) => {
+            if (event.key !== "Escape") return;
+            pointerTypeRef.current = null;
+            setOpen(false);
+            event.currentTarget.blur();
+          }}
+        >
+          <CircleHelp className="size-4" aria-hidden />
+        </button>
+        <div
+          id="supply-limit-help-content"
+          role="tooltip"
+          className={[
+            "absolute bottom-11 right-0 z-20 w-[min(34rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface px-4 py-3 text-xs leading-5 text-ink-dim shadow-xl transition",
+            open ? "visible translate-y-0 opacity-100" : "invisible translate-y-1 opacity-0",
+          ].join(" ")}
+        >
+          <ul className="list-disc space-y-1 pl-4">
+            <li>输入值是 EnergyLogger 节点记录的合计 Supply Current 上限，不是单台电机控制器的限流值。</li>
+            <li>顶层终端电机组可直接配置；带下级节点的聚合路径必须确认其代表同构电机组。</li>
+            <li>同一模拟不能同时启用祖先和后代节点，避免重复计算。</li>
+            <li>模拟保持历史动作时长和电池电压轨迹不变，不重新预测最低电压或 Brownout。</li>
+            <li>报告不预测 Stator Current、扭矩、温升、机构动作或动作结果。</li>
+          </ul>
+        </div>
+      </div>
+    </aside>
   );
 }
 

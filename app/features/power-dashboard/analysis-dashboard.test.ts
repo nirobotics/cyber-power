@@ -8,6 +8,7 @@ describe("dashboardPageTitle", () => {
   it("uses the active navigation label and cyber-power suffix", () => {
     expect(dashboardPageTitle("robot")).toBe("整机 | cyber-power");
     expect(dashboardPageTitle("subsystems")).toBe("子系统 | cyber-power");
+    expect(dashboardPageTitle("simulation")).toBe("模拟 | cyber-power");
     expect(dashboardPageTitle("quality")).toBe("数据质量 | cyber-power");
   });
 });
@@ -26,26 +27,37 @@ describe("peak location", () => {
   });
 });
 
-describe("multi-target supply limit scenario", () => {
-  it("finishes validation and estimation before replacing the applied scenario", () => {
-    const start = dashboardSource.indexOf("const applySupplyLimitScenario = useCallback");
-    const end = dashboardSource.indexOf("const revertSupplyLimitDrafts", start);
+describe("live supply limit simulation", () => {
+  it("moves the report to its own navigation panel without modifying subsystem charts", () => {
+    const subsystemStart = dashboardSource.indexOf('{tab === "subsystems"');
+    const simulationStart = dashboardSource.indexOf('{tab === "simulation"');
+    const qualityStart = dashboardSource.indexOf('{tab === "quality"');
 
-    expect(start).toBeGreaterThanOrEqual(0);
-    expect(end).toBeGreaterThan(start);
-    const handler = dashboardSource.slice(start, end);
-    expect(handler.indexOf("validateSupplyCurrentLimits")).toBeLessThan(
-      handler.indexOf("estimateSupplyCurrentLimits"),
-    );
-    expect(handler.indexOf("estimateSupplyCurrentLimits")).toBeLessThan(
-      handler.indexOf("setAppliedSupplyScenario"),
-    );
-    expect(handler).toContain("cachedEstimate: estimate");
-    expect(handler).toContain("已保留上一次成功应用的方案");
+    expect(subsystemStart).toBeGreaterThanOrEqual(0);
+    expect(simulationStart).toBeGreaterThan(subsystemStart);
+    expect(qualityStart).toBeGreaterThan(simulationStart);
+    expect(dashboardSource.slice(subsystemStart, simulationStart)).not.toContain("SupplyLimitSimulator");
+    expect(dashboardSource.slice(subsystemStart, simulationStart)).toContain("SubsystemTimelines");
+    expect(dashboardSource.slice(simulationStart, qualityStart)).toContain("SupplyLimitSimulator");
+    expect(dashboardSource).not.toContain("SupplyLimitTimeline");
   });
 
-  it("keeps old estimate errors separate from draft errors", () => {
-    expect(dashboardSource).toContain("errors={supplyLimitErrors}");
-    expect(dashboardSource).toContain("estimateErrors={supplyEstimateState.errors}");
+  it("uses drafts as the only configuration source and estimates once when enabled", () => {
+    const parseIndex = dashboardSource.indexOf("const parsed = supplyLimitDraftsToInputs");
+    const enabledGuardIndex = dashboardSource.indexOf("!supplySimulationEnabled", parseIndex);
+
+    expect(dashboardSource).toContain("supplySimulationEnabled");
+    expect(dashboardSource).toContain('tab !== "simulation"');
+    expect(parseIndex).toBeGreaterThanOrEqual(0);
+    expect(enabledGuardIndex).toBeGreaterThan(parseIndex);
+    expect(dashboardSource).toContain("onSimulationEnabledChange={setSupplySimulationEnabled}");
+    expect(dashboardSource.match(/estimateSupplyCurrentLimits\(/g)).toHaveLength(1);
+    expect(dashboardSource).not.toContain("AppliedSupplyLimitScenario");
+    expect(dashboardSource).not.toContain("applySupplyLimitScenario");
+    expect(dashboardSource).not.toContain("revertSupplyLimitDrafts");
+  });
+
+  it("keeps the shared time range available on the simulation page", () => {
+    expect(dashboardSource).toContain('tab === "robot" || tab === "subsystems" || tab === "simulation"');
   });
 });
