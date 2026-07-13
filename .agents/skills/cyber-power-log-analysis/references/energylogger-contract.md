@@ -50,7 +50,10 @@ Current and power are instantaneous sample-and-hold state. Energy is cumulative 
 ## Metric definitions
 
 - Selection energy: cumulative delta `E(end) - E(start)`, with reset handling.
-- Average power: `energyWh * 3600 / durationSeconds`.
+- Average power: when Driver Station Enabled is available, sum cumulative energy deltas only
+  across the selected range's Enabled interval intersections and divide by their total duration;
+  an all-Disabled selection is `0 W`. When Enabled is unavailable, fall back to
+  `energyWh * 3600 / durationSeconds` over the complete selection.
 - Peak power and current: extrema inside the selected inclusive time range.
 - Minimum voltage: minimum optional battery series inside the range.
 - Brownout count and duration: intersections of true intervals with the range.

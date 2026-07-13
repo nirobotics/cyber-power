@@ -4,9 +4,12 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EnergyLogDataset, NumericSeries, SubsystemNode } from "../log-analysis/core";
 import {
+  bindTimelinePointerInteractions,
+  captureWheelForPageScroll,
   createRobotTimelineOption,
   createSubsystemTimelineOption,
   heldSeriesPairs,
+  isEchoedLocalPreview,
   RobotTimeline,
   seriesPairs,
   syncCursor,
@@ -136,6 +139,65 @@ describe("shared ECharts cursor", () => {
   });
 });
 
+describe("chart cursor interactions", () => {
+  it("keeps a peak-following hover eligible for click when the parent echoes its preview", () => {
+    expect(isEchoedLocalPreview(true, 4_000_000, 4_000_000)).toBe(true);
+    expect(isEchoedLocalPreview(false, 4_000_000, 4_000_000)).toBe(false);
+  });
+
+  it("previews on hover, commits only on click, and clears the preview on leave", () => {
+    const chart = cursorChart(1);
+    const onPreview = vi.fn();
+    const onCommit = vi.fn();
+    let leaveListener: EventListener | null = null;
+    const container = {
+      addEventListener: vi.fn((_type: string, listener: EventListener) => {
+        leaveListener = listener;
+      }),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLElement;
+    const cleanup = bindTimelinePointerInteractions(
+      chart,
+      container,
+      0,
+      { current: false },
+      { current: null },
+      onPreview,
+      onCommit,
+    );
+
+    try {
+      syncCursor(chart, 0, 4_000_000, null);
+      expect(onPreview).toHaveBeenLastCalledWith(4_000_000);
+      expect(onCommit).not.toHaveBeenCalled();
+
+      const directClickX = chart.convertToPixel({ xAxisIndex: 0 }, 6);
+      chart.getZr().trigger("click", {
+        target: null,
+        topTarget: null,
+        offsetX: directClickX,
+        offsetY: 60,
+      });
+      expect(onCommit).toHaveBeenCalledOnce();
+      expect(onCommit).toHaveBeenCalledWith(6_000_000);
+
+      chart.getZr().trigger("click", {
+        target: null,
+        topTarget: null,
+        offsetX: directClickX,
+        offsetY: 490,
+      });
+      expect(onCommit).toHaveBeenCalledOnce();
+
+      (leaveListener as EventListener | null)?.(new Event("mouseleave"));
+      expect(onPreview).toHaveBeenLastCalledWith(null);
+    } finally {
+      cleanup();
+      chart.dispose();
+    }
+  });
+});
+
 describe("robot timeline cards", () => {
   it("builds one chart option per metric without the old multi-grid legend", () => {
     const dataset = robotDataset();
@@ -157,6 +219,17 @@ describe("robot timeline cards", () => {
     }
   });
 
+  it("fixes the battery voltage axis to the useful operating range", () => {
+    const option = robotOptionView(createRobotTimelineOption(
+      robotDataset(),
+      "voltage",
+      "dark",
+      "robot-voltage-time-range",
+    ));
+
+    expect(option.yAxis[0]).toMatchObject({ min: 3, max: 13.5 });
+  });
+
   it("keeps the mode and brownout areas on voltage only", () => {
     const dataset = robotDataset();
     const voltage = robotOptionView(createRobotTimelineOption(dataset, "voltage", "dark", "voltage"));
@@ -172,8 +245,10 @@ describe("robot timeline cards", () => {
       dataset,
       range: { startUs: 0, endUs: 1_000_000 },
       cursorUs: 500_000,
+      cursorPreviewActive: false,
       focus: "power",
-      onCursorChange: () => undefined,
+      onCursorPreview: () => undefined,
+      onCursorCommit: () => undefined,
     }));
 
     expect(markup).toContain('aria-label="整机曲线图例"');
@@ -182,6 +257,7 @@ describe("robot timeline cards", () => {
     expect(markup).toContain('aria-label="整机总功率"');
     expect(markup).toContain('aria-label="整机累计能量"');
     expect(markup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(4);
+    expect(markup.match(/cursor-default \[&amp;_\*\]:!cursor-default/g)).toHaveLength(4);
   });
 });
 
@@ -214,6 +290,7 @@ describe("subsystem timeline options", () => {
       expect(option.series).toHaveLength(1);
       expect(option.series[0]).toMatchObject({ id: node.id, data: testCase.data });
       expect(option.series[0]?.step).toBe(testCase.step);
+      expect(option.series[0]?.emphasis).toEqual({ disabled: true });
     }
   });
 
@@ -232,6 +309,36 @@ describe("subsystem timeline options", () => {
       ));
       expect(option.series).toEqual([]);
     }
+  });
+});
+
+describe("chart wheel passthrough", () => {
+  it("stops capture before ECharts without cancelling page scrolling and removes the listener", () => {
+    const addEventListener = vi.fn();
+    const removeEventListener = vi.fn();
+    const container = { addEventListener, removeEventListener } as unknown as HTMLElement;
+    const cleanup = captureWheelForPageScroll(container);
+    const listener = addEventListener.mock.calls[0]?.[1] as (event: WheelEvent) => void;
+    const event = {
+      stopPropagation: vi.fn(),
+      preventDefault: vi.fn(),
+    } as unknown as WheelEvent;
+
+    expect(addEventListener).toHaveBeenCalledWith(
+      "wheel",
+      listener,
+      { capture: true, passive: true },
+    );
+    listener(event);
+    expect(event.stopPropagation).toHaveBeenCalledOnce();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+
+    cleanup();
+    expect(removeEventListener).toHaveBeenCalledWith(
+      "wheel",
+      listener,
+      { capture: true, passive: true },
+    );
   });
 });
 
@@ -296,7 +403,12 @@ function robotDataset(): EnergyLogDataset {
 function optionView(option: unknown) {
   return option as {
     dataZoom: Array<{ id?: string }>;
-    series: Array<{ id?: string; data?: Array<[number, number]>; step?: "end" }>;
+    series: Array<{
+      id?: string;
+      data?: Array<[number, number]>;
+      step?: "end";
+      emphasis?: { disabled?: boolean };
+    }>;
   };
 }
 
@@ -305,7 +417,7 @@ function robotOptionView(option: unknown) {
     dataZoom: Array<{ id?: string }>;
     grid: unknown[];
     xAxis: unknown[];
-    yAxis: unknown[];
+    yAxis: Array<{ min?: number; max?: number }>;
     legend?: unknown;
     series: Array<{ id?: string; markArea?: { data?: unknown[] } }>;
   };

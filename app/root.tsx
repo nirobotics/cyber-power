@@ -18,7 +18,7 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export const meta = () => [
-  { title: "Cyber Power · FRC 机器人能量分析" },
+  { title: "cyber-power" },
   {
     name: "description",
     content: "面向正确接入 NI EnergyLogger 的机器人的本地优先 WPILOG 能量分析工具。",

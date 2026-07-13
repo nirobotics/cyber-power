@@ -1149,6 +1149,32 @@ function rangeIntersections(intervals: TimeInterval[], range: TimeRange): TimeIn
   return result;
 }
 
+function calculateAveragePowerW(
+  energySeries: NumericSeries,
+  selectionEnergyWh: number,
+  selectionDurationSeconds: number,
+  enabledIntervals: TimeInterval[] | undefined,
+): number {
+  if (enabledIntervals === undefined) {
+    return selectionDurationSeconds > 0
+      ? (selectionEnergyWh * 3600) / selectionDurationSeconds
+      : 0;
+  }
+
+  const enabledDurationSeconds = enabledIntervals.reduce(
+    (sum, interval) => sum + interval.durationSeconds,
+    0,
+  );
+  if (enabledDurationSeconds <= 0) return 0;
+
+  const enabledEnergyWh = enabledIntervals.reduce(
+    (sum, interval) =>
+      sum + cumulativeDelta(energySeries, interval.startUs, interval.endUs).energy,
+    0,
+  );
+  return (enabledEnergyWh * 3600) / enabledDurationSeconds;
+}
+
 export function analyzeEnergyRange(
   dataset: EnergyLogDataset,
   requested: Partial<TimeRange> = {},
@@ -1169,6 +1195,13 @@ export function analyzeEnergyRange(
     range.startUs,
     range.endUs,
   ).energy;
+  const brownoutIntervals = rangeIntersections(dataset.segments.brownouts, range);
+  const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
+  const enabledAverageIntervals = dataset.series.enabled ? enabledIntervals : undefined;
+  const enabledDurationSeconds = enabledIntervals.reduce(
+    (sum, interval) => sum + interval.durationSeconds,
+    0,
+  );
 
   const subsystemMetrics: SubsystemRangeMetrics[] = dataset.subsystems.map((node) => {
     const energyWh = cumulativeDelta(node.energyWh, range.startUs, range.endUs).energy;
@@ -1183,7 +1216,12 @@ export function analyzeEnergyRange(
       childrenIds: node.childrenIds,
       isAggregate: node.isAggregate,
       energyWh,
-      averagePowerW: durationSeconds > 0 ? (energyWh * 3600) / durationSeconds : 0,
+      averagePowerW: calculateAveragePowerW(
+        node.energyWh,
+        energyWh,
+        durationSeconds,
+        enabledAverageIntervals,
+      ),
       peakPowerW: peakPower.value,
       peakPowerTimestampUs: peakPower.timestampUs,
       peakCurrentA: peakCurrent.value,
@@ -1201,8 +1239,6 @@ export function analyzeEnergyRange(
     metrics.share = siblingTotal > 0 ? metrics.energyWh / siblingTotal : null;
   }
 
-  const brownoutIntervals = rangeIntersections(dataset.segments.brownouts, range);
-  const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
   const topLevelEnergyWh = subsystemMetrics
     .filter((metrics) => metrics.parentId === null)
     .reduce((sum, metrics) => sum + metrics.energyWh, 0);
@@ -1231,7 +1267,12 @@ export function analyzeEnergyRange(
     range: { ...range, durationSeconds },
     totals: {
       energyWh: totalEnergy,
-      averagePowerW: durationSeconds > 0 ? (totalEnergy * 3600) / durationSeconds : 0,
+      averagePowerW: calculateAveragePowerW(
+        dataset.series.totalEnergyWh,
+        totalEnergy,
+        durationSeconds,
+        enabledAverageIntervals,
+      ),
       peakPowerW: peakPower.value,
       peakPowerTimestampUs: peakPower.timestampUs,
       peakCurrentA: peakCurrent.value,
@@ -1244,10 +1285,7 @@ export function analyzeEnergyRange(
         (sum, interval) => sum + interval.durationSeconds,
         0,
       ),
-      enabledDurationSeconds: enabledIntervals.reduce(
-        (sum, interval) => sum + interval.durationSeconds,
-        0,
-      ),
+      enabledDurationSeconds,
     },
     subsystems: subsystemMetrics,
     quality: { ...dataset.quality, reconciliation: rangeReconciliation },

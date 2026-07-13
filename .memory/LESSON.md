@@ -11,3 +11,6 @@
 - 动态子系统层级表应依据稳定的 `parentId` 关系构造可见行；默认展开状态为空，只显示根节点与孤立节点，用户展开父级后再逐层显示后代，不能用排序后的相邻行或路径字符串猜层级。
 - 标准 AdvantageKit 不记录独立 Teleop 序列；机器人模式应由 `Enabled`、`Autonomous`、`Test` 的 sample-and-hold 状态推导，Practice 由 `int64 MatchType == 1` 判断。默认比赛范围必须基于合并后的模式区间，不能直接使用可能早于 Enabled 的原始 Autonomous 时间戳；MatchType 重复样本也不能制造每周期边界。
 - 原生 `input[type=range]` 的圆点、外置标签和竖线必须使用同一组完整日志 `min/max`；限制游标只能留在选区时应 clamp `value`，不能把 input 的 `min/max` 改成选区。端点吸附只在 pointer drag 生效，并用像素半径换算时间容差与 pending ref 处理同帧连续事件。
+- Cyber Apps 的 Shell 深色主题以 Cyber Parts 为基准：页面背景 `#111015`、Panel `#191720`、Border `#2d2938`；`--bg/--surface/--line` 等 Tailwind 别名必须与这组核心 token 同步，不能只改 `--background/--panel`。
+- 多图时间游标必须区分固定值与悬停预览：悬停只同步图表显示，离开图表后恢复固定值，不能移动底部时间组件；只有图表点击、底部游标操作或峰值定位可提交固定值。图表点击应直接用点击像素换算时间，不能依赖先前的 mousemove 状态。
+- 平均功率在存在 `Enabled` 序列时应以选区内所有 Enabled 交集的累计能量增量之和除以 Enabled 总时长；Disabled 期间的能量变化不进入分子，全 Disabled 返回 0。缺少 `Enabled` 序列时才回退到完整选区口径，以兼容旧日志。

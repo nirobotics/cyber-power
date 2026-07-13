@@ -23,7 +23,7 @@ type CallbackFailure = {
 };
 
 export function meta(_args: Route.MetaArgs) {
-  return [{ title: "Cyber Power | 登录回调" }];
+  return [{ title: "登录回调 | cyber-power" }];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

@@ -244,6 +244,85 @@ describe("generic EnergyLogger analysis", () => {
     expect(Array.from(result.dataset.series.matchType?.values ?? [])).toEqual([1n]);
   });
 
+  it("excludes disabled intervals from total and subsystem average power", async () => {
+    const { builder, entries } = buildEnergyFixture({ includeOptionals: true });
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 0 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 10, power: 100, energy: 2 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 10, power: 100, energy: 3 });
+    appendEnergySample(builder, entries, 4_000_000, { current: 10, power: 100, energy: 1 });
+    appendEnergySample(builder, entries, 5_000_000, { current: 10, power: 100, energy: 5 });
+    appendEnergySample(builder, entries, 6_000_000, { current: 10, power: 100, energy: 9 });
+    appendEnergySample(builder, entries, 7_000_000, { current: 10, power: 100, energy: 10 });
+    builder
+      .boolean(entries.enabled, 1_000_000, true)
+      .boolean(entries.enabled, 3_000_000, false)
+      .boolean(entries.enabled, 5_000_000, true)
+      .boolean(entries.enabled, 7_000_000, false);
+
+    const result = await analyzeWpiLog(builder.build());
+
+    expect(result.range.totals).toMatchObject({
+      energyWh: 12,
+      averagePowerW: 7_200,
+      enabledDurationSeconds: 4,
+    });
+    expect(result.range.subsystems[0]).toMatchObject({
+      energyWh: 12,
+      averagePowerW: 7_200,
+    });
+
+    const clipped = analyzeEnergyRange(result.dataset, {
+      startUs: 1_500_000,
+      endUs: 6_500_000,
+    });
+    expect(clipped.totals).toMatchObject({
+      energyWh: 11,
+      averagePowerW: 8_400,
+      enabledDurationSeconds: 3,
+    });
+    expect(clipped.subsystems[0]).toMatchObject({
+      energyWh: 11,
+      averagePowerW: 8_400,
+    });
+  });
+
+  it("reports zero average power when Enabled exists but the selection is all disabled", async () => {
+    const { builder, entries } = buildEnergyFixture({ includeOptionals: true });
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 0 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 10, power: 100, energy: 8 });
+    builder.boolean(entries.enabled, 1_000_000, false);
+
+    const result = await analyzeWpiLog(builder.build());
+
+    expect(result.range.totals).toMatchObject({
+      energyWh: 8,
+      averagePowerW: 0,
+      enabledDurationSeconds: 0,
+    });
+    expect(result.range.subsystems[0]).toMatchObject({
+      energyWh: 8,
+      averagePowerW: 0,
+    });
+  });
+
+  it("falls back to the complete selection when Enabled is unavailable", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 0 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 10, power: 100, energy: 8 });
+
+    const result = await analyzeWpiLog(builder.build());
+
+    expect(result.range.totals).toMatchObject({
+      energyWh: 8,
+      averagePowerW: 14_400,
+      enabledDurationSeconds: 0,
+    });
+    expect(result.range.subsystems[0]).toMatchObject({
+      energyWh: 8,
+      averagePowerW: 14_400,
+    });
+  });
+
   it("derives test mode and preserves MatchType boundaries", async () => {
     const { builder, entries } = buildEnergyFixture({ includeOptionals: true });
     appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 120, energy: 1 });

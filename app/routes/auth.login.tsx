@@ -21,7 +21,7 @@ import {
 const NO_STORE_HEADERS = { "Cache-Control": "no-store" };
 
 export function meta(_args: Route.MetaArgs) {
-  return [{ title: "Cyber Power | 登录" }];
+  return [{ title: "登录 | cyber-power" }];
 }
 
 export async function loader({ request }: Route.LoaderArgs) {

@@ -97,14 +97,18 @@ export function RobotTimeline({
   dataset,
   range,
   cursorUs,
+  cursorPreviewActive,
   focus,
-  onCursorChange,
+  onCursorPreview,
+  onCursorCommit,
 }: {
   dataset: EnergyLogDataset;
   range: TimeRange;
   cursorUs: number;
+  cursorPreviewActive: boolean;
   focus: TimelineFocus;
-  onCursorChange: (cursorUs: number) => void;
+  onCursorPreview: (cursorUs: number | null) => void;
+  onCursorCommit: (cursorUs: number) => void;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, getInitialTheme, getServerTheme);
   const options = useMemo(
@@ -144,8 +148,10 @@ export function RobotTimeline({
             cursorAxisIndex={0}
             range={range}
             cursorUs={cursorUs}
+            cursorPreviewActive={cursorPreviewActive}
             focus={focus === metricFocus ? focus : null}
-            onCursorChange={onCursorChange}
+            onCursorPreview={onCursorPreview}
+            onCursorCommit={onCursorCommit}
             className="h-[300px] min-h-[260px]"
             ariaLabel={ariaLabel}
           />
@@ -170,15 +176,19 @@ export function SubsystemTimelines({
   dataset,
   range,
   cursorUs,
+  cursorPreviewActive,
   hiddenSubsystemIds,
-  onCursorChange,
+  onCursorPreview,
+  onCursorCommit,
   onToggleSubsystem,
 }: {
   dataset: EnergyLogDataset;
   range: TimeRange;
   cursorUs: number;
+  cursorPreviewActive: boolean;
   hiddenSubsystemIds: ReadonlySet<string>;
-  onCursorChange: (cursorUs: number) => void;
+  onCursorPreview: (cursorUs: number | null) => void;
+  onCursorCommit: (cursorUs: number) => void;
   onToggleSubsystem: (id: string) => void;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, getInitialTheme, getServerTheme);
@@ -230,8 +240,10 @@ export function SubsystemTimelines({
             cursorAxisIndex={0}
             range={range}
             cursorUs={cursorUs}
+            cursorPreviewActive={cursorPreviewActive}
             focus={null}
-            onCursorChange={onCursorChange}
+            onCursorPreview={onCursorPreview}
+            onCursorCommit={onCursorCommit}
             className="h-[300px] min-h-[260px]"
             ariaLabel={ariaLabel}
           />
@@ -248,8 +260,10 @@ function TimelineChart({
   cursorAxisIndex,
   range,
   cursorUs,
+  cursorPreviewActive,
   focus,
-  onCursorChange,
+  onCursorPreview,
+  onCursorCommit,
   className,
   ariaLabel,
 }: {
@@ -259,8 +273,10 @@ function TimelineChart({
   cursorAxisIndex: number;
   range: TimeRange;
   cursorUs: number;
+  cursorPreviewActive: boolean;
   focus: TimelineFocus;
-  onCursorChange: (cursorUs: number) => void;
+  onCursorPreview: (cursorUs: number | null) => void;
+  onCursorCommit: (cursorUs: number) => void;
   className: string;
   ariaLabel: string;
 }) {
@@ -270,18 +286,27 @@ function TimelineChart({
   const rangeRef = useRef(range);
   const cursorRef = useRef(cursorUs);
   const focusRef = useRef(focus);
-  const callbackRef = useRef(onCursorChange);
+  const previewCallbackRef = useRef(onCursorPreview);
+  const commitCallbackRef = useRef(onCursorCommit);
   const syncingCursorRef = useRef(false);
-  const localCursorRef = useRef<number | null>(null);
+  const localPreviewRef = useRef<number | null>(null);
   optionRef.current = option;
   rangeRef.current = range;
   cursorRef.current = cursorUs;
   focusRef.current = focus;
-  callbackRef.current = onCursorChange;
+  previewCallbackRef.current = onCursorPreview;
+  commitCallbackRef.current = onCursorCommit;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    return captureWheelForPageScroll(container);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     let resizeObserver: ResizeObserver | undefined;
+    let cleanupPointerInteractions: (() => void) | undefined;
 
     void import("echarts").then((echarts) => {
       if (cancelled || !containerRef.current) return;
@@ -290,23 +315,22 @@ function TimelineChart({
       chart.setOption(optionRef.current, { notMerge: true });
       syncRange(chart, zoomId, rangeRef.current, dataset);
       syncCursor(chart, cursorAxisIndex, cursorRef.current, focusRef.current, syncingCursorRef);
-      chart.on("updateAxisPointer", (...args: unknown[]) => {
-        if (syncingCursorRef.current) return;
-        const event = args[0] as AxisPointerEvent;
-        const axis = event.axesInfo?.find((candidate) => candidate.axisDim === "x");
-        if (typeof axis?.value !== "number" || !Number.isFinite(axis.value)) return;
-        const nextUs = Math.round(axis.value * 1_000_000);
-        if (Math.abs(nextUs - cursorRef.current) >= 1) {
-          localCursorRef.current = nextUs;
-          callbackRef.current(nextUs);
-        }
-      });
+      cleanupPointerInteractions = bindTimelinePointerInteractions(
+        chart,
+        containerRef.current,
+        cursorAxisIndex,
+        syncingCursorRef,
+        localPreviewRef,
+        (nextUs) => previewCallbackRef.current(nextUs),
+        (nextUs) => commitCallbackRef.current(nextUs),
+      );
       resizeObserver = new ResizeObserver(() => chart.resize());
       resizeObserver.observe(containerRef.current);
     });
 
     return () => {
       cancelled = true;
+      cleanupPointerInteractions?.();
       resizeObserver?.disconnect();
       chartRef.current?.dispose();
       chartRef.current = null;
@@ -326,17 +350,21 @@ function TimelineChart({
   }, [dataset, range, zoomId]);
 
   useEffect(() => {
-    const originatedHere =
-      focus === null &&
-      localCursorRef.current !== null &&
-      Math.abs(localCursorRef.current - Math.round(cursorUs)) < 1;
-    localCursorRef.current = null;
+    const originatedHere = isEchoedLocalPreview(cursorPreviewActive, localPreviewRef.current, cursorUs);
     if (!originatedHere && chartRef.current) {
+      localPreviewRef.current = null;
       syncCursor(chartRef.current, cursorAxisIndex, cursorUs, focus, syncingCursorRef);
     }
-  }, [cursorAxisIndex, cursorUs, focus]);
+  }, [cursorAxisIndex, cursorPreviewActive, cursorUs, focus]);
 
-  return <div ref={containerRef} className={`w-full ${className}`} role="img" aria-label={ariaLabel} />;
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full cursor-default [&_*]:!cursor-default ${className}`}
+      role="img"
+      aria-label={ariaLabel}
+    />
+  );
 }
 
 export function createRobotTimelineOption(
@@ -407,7 +435,10 @@ export function createRobotTimelineOption(
       gridIndex: 0,
       axisLabel: { color: palette.muted, fontSize: 10, formatter: (value: number) => `${value.toFixed(0)}s` },
     }],
-    yAxis: [yAxis(`${selected.label} (${selected.unit})`, selected.color, 0, palette)],
+    yAxis: [{
+      ...yAxis(`${selected.label} (${selected.unit})`, selected.color, 0, palette),
+      ...(metric === "voltage" ? { min: 3, max: 13.5 } : {}),
+    }],
     dataZoom: [controlledZoom(zoomId, [0])],
     series: [
       lineSeries(selected.id, selected.label, data, selected.color, 0, 0, areas, selected.stepped),
@@ -498,10 +529,65 @@ function lineSeries(
     ...(stepped ? { step: "end" as const } : {}),
     lineStyle: { width: 1.3, color },
     itemStyle: { color },
-    emphasis: { focus: "series" as const, lineStyle: { width: 2 } },
+    emphasis: { disabled: true },
     ...(areas.length > 0
       ? { markArea: { silent: true, label: { show: false }, data: areas } }
       : {}),
+  };
+}
+
+export function isEchoedLocalPreview(active: boolean, localPreviewUs: number | null, displayedCursorUs: number) {
+  return active && localPreviewUs !== null && Math.abs(localPreviewUs - Math.round(displayedCursorUs)) < 1;
+}
+
+export function captureWheelForPageScroll(container: HTMLElement) {
+  const options: AddEventListenerOptions = { capture: true, passive: true };
+  const stopBeforeChart = (event: WheelEvent) => event.stopPropagation();
+  container.addEventListener("wheel", stopBeforeChart, options);
+  return () => container.removeEventListener("wheel", stopBeforeChart, options);
+}
+
+export function bindTimelinePointerInteractions(
+  chart: ECharts,
+  container: HTMLElement,
+  cursorAxisIndex: number,
+  syncingCursor: { current: boolean },
+  localPreview: { current: number | null },
+  onPreview: (cursorUs: number | null) => void,
+  onCommit: (cursorUs: number) => void,
+) {
+  const handleAxisPointer = (...args: unknown[]) => {
+    if (syncingCursor.current) return;
+    const event = args[0] as AxisPointerEvent;
+    const axis = event.axesInfo?.find((candidate) => candidate.axisDim === "x");
+    if (typeof axis?.value !== "number" || !Number.isFinite(axis.value)) return;
+    const nextUs = Math.round(axis.value * 1_000_000);
+    localPreview.current = nextUs;
+    onPreview(nextUs);
+  };
+  const handleClick = (event: { offsetX?: number; offsetY?: number }) => {
+    if (!Number.isFinite(event.offsetX) || !Number.isFinite(event.offsetY)) return;
+    const point: [number, number] = [event.offsetX!, event.offsetY!];
+    if (!chart.containPixel({ gridIndex: 0 }, point)) return;
+    const seconds = chart.convertFromPixel({ xAxisIndex: cursorAxisIndex }, point[0]);
+    if (typeof seconds !== "number" || !Number.isFinite(seconds)) return;
+    const nextUs = Math.round(seconds * 1_000_000);
+    localPreview.current = nextUs;
+    onCommit(nextUs);
+  };
+  const handleLeave = () => {
+    localPreview.current = null;
+    onPreview(null);
+  };
+  const renderer = chart.getZr();
+
+  chart.on("updateAxisPointer", handleAxisPointer);
+  renderer.on("click", handleClick);
+  container.addEventListener("mouseleave", handleLeave);
+  return () => {
+    chart.off("updateAxisPointer", handleAxisPointer);
+    renderer.off("click", handleClick);
+    container.removeEventListener("mouseleave", handleLeave);
   };
 }
 

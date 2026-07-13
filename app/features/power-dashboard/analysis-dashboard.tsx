@@ -18,6 +18,10 @@ const TABS = [
   { value: "quality", label: "数据质量", Icon: ShieldCheck },
 ] as const;
 
+export function dashboardPageTitle(tab: DashboardTab) {
+  return `${TABS.find(({ value }) => value === tab)?.label ?? "整机"} | cyber-power`;
+}
+
 export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const { dataset } = result;
   const initialRange = selectDefaultTimeRange(
@@ -37,16 +41,24 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     endUs: initialRange.endUs,
   }));
   const [cursorUs, setCursorUs] = useState(() => Math.round((initialRange.startUs + initialRange.endUs) / 2));
+  const [transientCursorUs, setTransientCursorUs] = useState<number | null>(null);
   const [focus, setFocus] = useState<TimelineFocus>(null);
   const [hiddenSubsystemIds, setHiddenSubsystemIds] = useState<Set<string>>(() => new Set());
   const previewRangeRef = useRef(previewRange);
   const cursorUsRef = useRef(cursorUs);
   const cursorFrameRef = useRef<number | null>(null);
   const pendingCursorUsRef = useRef<number | null>(null);
+  const transientCursorUsRef = useRef<number | null>(null);
+  const transientCursorFrameRef = useRef<number | null>(null);
+  const pendingTransientCursorUsRef = useRef<number | null>(null);
   const analysis = useMemo(
     () => analyzeEnergyRange(dataset, committedRange),
     [committedRange, dataset],
   );
+
+  useEffect(() => {
+    document.title = dashboardPageTitle(tab);
+  }, [tab]);
 
   const clampRange = useCallback((range: TimeRange) => {
     const startUs = Math.max(
@@ -60,7 +72,21 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     return { startUs, endUs };
   }, [dataset.bounds.energyEndUs, dataset.bounds.energyStartUs]);
 
+  const cancelPendingCursorPreview = useCallback(() => {
+    if (transientCursorFrameRef.current !== null) cancelFrame(transientCursorFrameRef.current);
+    transientCursorFrameRef.current = null;
+    pendingTransientCursorUsRef.current = null;
+  }, []);
+
+  const clearCursorPreview = useCallback(() => {
+    cancelPendingCursorPreview();
+    if (transientCursorUsRef.current === null) return;
+    transientCursorUsRef.current = null;
+    setTransientCursorUs(null);
+  }, [cancelPendingCursorPreview]);
+
   const preview = useCallback((range: TimeRange) => {
+    clearCursorPreview();
     const next = clampRange(range);
     previewRangeRef.current = next;
     if (pendingCursorUsRef.current !== null) {
@@ -73,7 +99,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
       setFocus(null);
     }
     setPreviewRange(next);
-  }, [clampRange]);
+  }, [clampRange, clearCursorPreview]);
 
   const cancelPendingCursor = useCallback(() => {
     if (cursorFrameRef.current !== null) cancelFrame(cursorFrameRef.current);
@@ -81,10 +107,14 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     pendingCursorUsRef.current = null;
   }, []);
 
-  useEffect(() => cancelPendingCursor, [cancelPendingCursor]);
+  useEffect(() => () => {
+    cancelPendingCursor();
+    cancelPendingCursorPreview();
+  }, [cancelPendingCursor, cancelPendingCursorPreview]);
 
   const commit = useCallback((range: TimeRange) => {
     cancelPendingCursor();
+    clearCursorPreview();
     const next = clampRange(range);
     const nextCursorUs = clampTimestampUs(cursorUsRef.current, next);
     previewRangeRef.current = next;
@@ -93,10 +123,43 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     setCommittedRange(next);
     setCursorUs(nextCursorUs);
     setFocus(null);
-  }, [cancelPendingCursor, clampRange]);
+  }, [cancelPendingCursor, clampRange, clearCursorPreview]);
+
+  const previewCursor = useCallback((nextUs: number | null) => {
+    if (nextUs === null) {
+      clearCursorPreview();
+      return;
+    }
+    if (!Number.isFinite(nextUs)) return;
+    pendingTransientCursorUsRef.current = clampTimestampUs(nextUs, previewRangeRef.current);
+    if (transientCursorFrameRef.current !== null) return;
+
+    transientCursorFrameRef.current = requestFrame(() => {
+      transientCursorFrameRef.current = null;
+      const pendingCursorUs = pendingTransientCursorUsRef.current;
+      pendingTransientCursorUsRef.current = null;
+      if (pendingCursorUs === null) return;
+      const clampedCursorUs = clampTimestampUs(pendingCursorUs, previewRangeRef.current);
+      setFocus(null);
+      if (clampedCursorUs === transientCursorUsRef.current) return;
+      transientCursorUsRef.current = clampedCursorUs;
+      setTransientCursorUs(clampedCursorUs);
+    });
+  }, [clearCursorPreview]);
+
+  const commitCursorNow = useCallback((nextUs: number) => {
+    if (!Number.isFinite(nextUs)) return;
+    cancelPendingCursor();
+    clearCursorPreview();
+    const nextCursorUs = clampTimestampUs(nextUs, previewRangeRef.current);
+    cursorUsRef.current = nextCursorUs;
+    setFocus(null);
+    setCursorUs(nextCursorUs);
+  }, [cancelPendingCursor, clearCursorPreview]);
 
   const moveCursor = useCallback((nextUs: number) => {
     if (!Number.isFinite(nextUs)) return;
+    clearCursorPreview();
     const nextCursorUs = clampTimestampUs(nextUs, previewRangeRef.current);
     if (nextCursorUs === cursorUsRef.current && pendingCursorUsRef.current === null) return;
     pendingCursorUsRef.current = nextCursorUs;
@@ -114,10 +177,11 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
       setFocus(null);
       setCursorUs(clampedCursorUs);
     });
-  }, []);
+  }, [clearCursorPreview]);
 
   const locatePeak = useCallback((kind: Exclude<TimelineFocus, null>) => {
     cancelPendingCursor();
+    clearCursorPreview();
     const peakTimestampUs = kind === "power"
       ? analysis.totals.peakPowerTimestampUs
       : analysis.totals.peakCurrentTimestampUs;
@@ -126,7 +190,9 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     setCursorUs(timestampUs);
     setFocus(kind);
     setTab("robot");
-  }, [analysis.totals.peakCurrentTimestampUs, analysis.totals.peakPowerTimestampUs, cancelPendingCursor]);
+  }, [analysis.totals.peakCurrentTimestampUs, analysis.totals.peakPowerTimestampUs, cancelPendingCursor, clearCursorPreview]);
+
+  const displayedCursorUs = transientCursorUs ?? cursorUs;
 
   const toggleSubsystem = useCallback((id: string) => {
     setHiddenSubsystemIds((current) => {
@@ -187,9 +253,11 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
             <RobotTimeline
               dataset={dataset}
               range={previewRange}
-              cursorUs={cursorUs}
+              cursorUs={displayedCursorUs}
+              cursorPreviewActive={transientCursorUs !== null}
               focus={focus}
-              onCursorChange={moveCursor}
+              onCursorPreview={previewCursor}
+              onCursorCommit={commitCursorNow}
             />
           </div>
         ) : null}
@@ -205,9 +273,11 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
             <SubsystemTimelines
               dataset={dataset}
               range={previewRange}
-              cursorUs={cursorUs}
+              cursorUs={displayedCursorUs}
+              cursorPreviewActive={transientCursorUs !== null}
               hiddenSubsystemIds={hiddenSubsystemIds}
-              onCursorChange={moveCursor}
+              onCursorPreview={previewCursor}
+              onCursorCommit={commitCursorNow}
               onToggleSubsystem={toggleSubsystem}
             />
             <SubsystemTable dataset={dataset} analysis={analysis} />
