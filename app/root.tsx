@@ -9,12 +9,11 @@ import {
   ScrollRestoration,
 } from "react-router";
 import type { Route } from "./+types/root";
-import stylesheet from "./app.css?url";
+import "./app.css";
 import { PwaRegistration } from "./components/pwa-registration";
 import { themeBootstrapScript } from "./lib/theme";
 
 export const links: Route.LinksFunction = () => [
-  { rel: "stylesheet", href: stylesheet },
   { rel: "icon", href: "/favicon.png", type: "image/png" },
 ];
 
