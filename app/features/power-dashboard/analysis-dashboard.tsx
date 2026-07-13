@@ -189,7 +189,6 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     cursorUsRef.current = timestampUs;
     setCursorUs(timestampUs);
     setFocus(kind);
-    setTab("robot");
   }, [analysis.totals.peakCurrentTimestampUs, analysis.totals.peakPowerTimestampUs, cancelPendingCursor, clearCursorPreview]);
 
   const displayedCursorUs = transientCursorUs ?? cursorUs;

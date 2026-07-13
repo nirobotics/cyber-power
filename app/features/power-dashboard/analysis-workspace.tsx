@@ -13,6 +13,10 @@ export type AnalysisWorkspaceChrome = {
   onReplace: () => void;
 };
 
+export function analysisWorkspacePageTitle(hasAnalysis: boolean) {
+  return hasAnalysis ? null : "cyber-power";
+}
+
 export function AnalysisWorkspace({
   onChromeChange,
 }: {
@@ -27,6 +31,11 @@ export function AnalysisWorkspace({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => () => workerRef.current?.terminate(), []);
+
+  useEffect(() => {
+    const title = analysisWorkspacePageTitle(result !== null);
+    if (title) document.title = title;
+  }, [result]);
 
   const replace = useCallback(() => {
     const requestId = requestRef.current;

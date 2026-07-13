@@ -17,3 +17,4 @@
 - Cyber Apps 的 Shell 深色主题以 Cyber Parts 为基准：页面背景 `#111015`、Panel `#191720`、Border `#2d2938`；`--bg/--surface/--line` 等 Tailwind 别名必须与这组核心 token 同步，不能只改 `--background/--panel`。
 - 多图时间游标必须区分固定值与悬停预览：悬停只同步图表显示，离开图表后恢复固定值，不能移动底部时间组件；只有图表点击、底部游标操作或峰值定位可提交固定值。图表点击应直接用点击像素换算时间，不能依赖先前的 mousemove 状态。
 - 平均功率在存在 `Enabled` 序列时应以选区内所有 Enabled 交集的累计能量增量之和除以 Enabled 总时长；Disabled 期间的能量变化不进入分子，全 Disabled 返回 0。缺少 `Enabled` 序列时才回退到完整选区口径，以兼容旧日志。
+- 同一路由的上传态与分析态共用页面时，SSR route meta 只能给上传态的稳定标题；客户端 Workspace 在结果为空时负责恢复应用名，分析结果存在时必须把标题所有权留给内部导航 Dashboard，否则替换文件后会残留旧导航标题。
