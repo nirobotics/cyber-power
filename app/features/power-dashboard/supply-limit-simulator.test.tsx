@@ -252,7 +252,7 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).toContain('value="40"');
     expect(markup).toMatch(/id="supply-limit-indexer"[^>]*value="40"[^>]*>/);
     expect(markup).not.toMatch(/id="supply-limit-indexer"[^>]*disabled=""/);
-    expect(markup).not.toContain("限流模拟报告");
+    expect(markup).not.toContain('id="supply-limit-results-title"');
   });
 
   it("keeps unavailable nodes visible but disables their row controls", () => {
@@ -283,7 +283,7 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).toContain('aria-checked="true"');
     expect(markup).toContain("请输入有效电流。");
     expect(markup.match(/请输入有效电流。/g)).toHaveLength(1);
-    expect(markup).not.toContain("限流模拟报告");
+    expect(markup).not.toContain('id="supply-limit-results-title"');
   });
 
   it("omits non-actionable row status copy before a report exists", () => {
@@ -317,7 +317,10 @@ describe("SupplyLimitSimulator", () => {
     });
 
     expect(markup).toContain('aria-checked="true"');
-    expect(markup).toContain("限流模拟报告");
+    expect(markup).toMatch(/id="supply-limit-results-title"[^>]*>报告<\/h2>/);
+    expect(markup).not.toContain("限流模拟报告");
+    expect(markup).not.toContain("固定历史时间轴");
+    expect(markup).not.toContain("个目标");
     expect(markup).toContain("整机总能量");
     expect(markup).toContain("40.000 Wh");
     expect(markup).toContain("38.000 Wh");

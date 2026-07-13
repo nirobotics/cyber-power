@@ -556,13 +556,10 @@ function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
       aria-labelledby="supply-limit-results-title"
       aria-live="polite"
     >
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+      <div className="border-b border-line px-4 py-3">
         <h2 id="supply-limit-results-title" className="text-sm font-semibold text-ink">
-          限流模拟报告
+          报告
         </h2>
-        <span className="text-[10px] text-ink-faint">
-          固定历史时间轴 · {totals.activeTargetCount} 个目标
-        </span>
       </div>
 
       <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4">
