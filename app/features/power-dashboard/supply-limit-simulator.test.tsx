@@ -139,9 +139,11 @@ describe("SupplyLimitSimulator", () => {
   it("renders the streamlined editor, accessible controls, and bottom help", () => {
     const markup = renderSimulator();
 
-    expect(markup).toContain("限流模拟");
+    expect(markup).toMatch(/id="supply-limit-editor-title"[^>]*>明细<\/h2>/);
     expect(markup).toContain('role="switch"');
     expect(markup).toContain('aria-checked="false"');
+    expect(markup).toContain("border-ink-faint/70 bg-surface-2");
+    expect(markup).not.toContain("bg-line-strong");
     expect(markup).toContain('aria-label="清空限流模拟"');
     expect(markup).toContain('aria-label="限流模拟路径表"');
     expect(markup).toContain('tabindex="0"');
@@ -164,6 +166,8 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).not.toContain("清空方案");
     expect(markup).not.toContain("可添加的限流目标");
     expect(markup).not.toContain("移除目标");
+    expect(markup).not.toContain("text-right");
+    expect(markup).not.toContain("text-center");
   });
 
   it("shows every available target without the old twelve-item search limit", () => {
@@ -196,7 +200,7 @@ describe("SupplyLimitSimulator", () => {
     const markup = renderSimulator({ targets: [targets[2]], draftLimits });
 
     expect(markup).toContain('value="80"');
-    expect(markup).toContain("预计会触发");
+    expect(markup).not.toContain("预计会触发");
     expect(markup).not.toContain("确认同构电机组");
   });
 
@@ -282,7 +286,7 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).not.toContain("限流模拟报告");
   });
 
-  it("does not label valid rows as actively simulated until a current report exists", () => {
+  it("omits non-actionable row status copy before a report exists", () => {
     const markup = renderSimulator({
       draftLimits: [{
         nodeId: "indexer",
@@ -294,8 +298,9 @@ describe("SupplyLimitSimulator", () => {
       simulationEnabled: true,
     });
 
-    expect(markup).toContain("预计会触发");
+    expect(markup).not.toContain("预计会触发");
     expect(markup).not.toContain("模拟中");
+    expect(markup).not.toContain("supply-limit-status-");
   });
 
   it("renders the live report without target-selection buttons or charts", () => {
@@ -317,10 +322,14 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).toContain("40.000 Wh");
     expect(markup).toContain("38.000 Wh");
     expect(markup).toContain("预计节省能量");
-    expect(markup).toContain("模拟中");
+    expect(markup).not.toContain("模拟中");
     expect(markup).toContain("120.0 → 80.0 A");
-    expect(markup).toContain("<details");
-    expect(markup).toContain("累计能量发生重置，已分段估算。");
+    expect(markup).not.toContain("EnergyLogger 路径");
+    expect(markup).not.toMatch(/<th[^>]*>状态<\/th>/);
+    expect(markup).not.toContain("<details");
+    expect(markup).not.toContain("累计能量发生重置，已分段估算。");
+    expect(markup).not.toContain("text-right");
+    expect(markup).not.toContain("text-center");
     expect(markup).not.toContain("查看indexer");
     expect(markup).not.toContain("限流估算整机总电流时间图");
   });

@@ -247,7 +247,7 @@ export function SupplyLimitSimulator({
             id="supply-limit-editor-title"
             className="text-sm font-semibold text-ink"
           >
-            限流模拟
+            明细
           </h2>
           <div className="flex items-center gap-2">
             <button
@@ -259,14 +259,16 @@ export function SupplyLimitSimulator({
               disabled={!simulationEnabled && !canEnableSimulation}
               onClick={() => onSimulationEnabledChange(!simulationEnabled)}
               className={[
-                "relative h-6 w-11 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
-                simulationEnabled ? "bg-brand" : "bg-line-strong",
+                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
+                simulationEnabled
+                  ? "border-brand bg-brand"
+                  : "border-ink-faint/70 bg-surface-2",
               ].join(" ")}
             >
               <span
                 className={[
-                  "absolute top-0.5 size-5 rounded-full bg-white shadow-sm transition-transform",
-                  simulationEnabled ? "translate-x-5" : "translate-x-0.5",
+                  "pointer-events-none absolute left-0.5 top-0.5 size-5 rounded-full border border-line bg-white shadow-sm transition-transform",
+                  simulationEnabled ? "translate-x-5" : "translate-x-0",
                 ].join(" ")}
                 aria-hidden
               />
@@ -290,17 +292,27 @@ export function SupplyLimitSimulator({
           aria-label="限流模拟路径表"
           tabIndex={0}
         >
-          <table className="w-full min-w-[1220px] text-left text-xs">
+          <table className="w-full min-w-[1080px] table-fixed text-left text-xs">
+            <colgroup>
+              <col className="w-[260px]" />
+              <col />
+              <col />
+              <col />
+              <col />
+              <col />
+              <col className="w-60" />
+              <col className="w-20" />
+            </colgroup>
             <thead className="bg-surface-2 text-[10px] uppercase tracking-wider text-ink-faint">
               <tr>
                 <th className="px-4 py-2.5 font-semibold">路径</th>
-                <th className="px-3 py-2.5 text-right font-semibold">能量</th>
-                <th className="px-3 py-2.5 text-right font-semibold">同级占比</th>
-                <th className="px-3 py-2.5 text-right font-semibold">平均功率</th>
-                <th className="px-3 py-2.5 text-right font-semibold">峰值功率</th>
-                <th className="px-3 py-2.5 text-right font-semibold">峰值电流</th>
+                <th className="px-3 py-2.5 font-semibold">能量</th>
+                <th className="px-3 py-2.5 font-semibold">同级占比</th>
+                <th className="px-3 py-2.5 font-semibold">平均功率</th>
+                <th className="px-3 py-2.5 font-semibold">峰值功率</th>
+                <th className="px-3 py-2.5 font-semibold">峰值电流</th>
                 <th className="w-60 px-3 py-2.5 font-semibold">Supply 限流值</th>
-                <th className="w-20 px-4 py-2.5 text-center font-semibold">启用</th>
+                <th className="w-20 px-4 py-2.5 font-semibold">启用</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-line">
@@ -317,6 +329,17 @@ export function SupplyLimitSimulator({
                 const parsedLimit = parseSupplyLimitDraftValue(draft.limitText);
                 const aggregateConfirmationMissing =
                   draft.enabled && aggregate && !draft.aggregateConfirmed;
+                const validationMessage = !draft.enabled
+                  ? null
+                  : conflict
+                    ? "与另一个已启用的上级或下级路径冲突"
+                    : nodeErrors.length > 0
+                      ? nodeErrors[0]
+                      : aggregateConfirmationMissing
+                        ? "等待同构确认"
+                        : parsedLimit === null
+                          ? "输入无效"
+                          : null;
                 const inputInvalid =
                   draft.enabled &&
                   (nodeErrors.length > 0 ||
@@ -330,7 +353,7 @@ export function SupplyLimitSimulator({
                   ? `supply-limit-unavailable-${rowIndex}`
                   : undefined;
                 const describedBy = [
-                  draft.enabled ? statusId : undefined,
+                  validationMessage ? statusId : undefined,
                   unavailableId,
                 ].filter(Boolean).join(" ") || undefined;
                 const enabledDescendantCount =
@@ -344,7 +367,7 @@ export function SupplyLimitSimulator({
                     ].join(" ")}
                   >
                     <td
-                      className="max-w-[360px] px-4 py-2.5 align-top font-mono text-ink"
+                      className="max-w-[260px] px-4 py-2.5 align-top font-mono text-ink"
                       title={target.rawPath}
                     >
                       <div
@@ -385,22 +408,22 @@ export function SupplyLimitSimulator({
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink">
+                    <td className="px-3 py-2.5 align-top font-mono text-ink">
                       {formatNumber(target.energyWh, 4)} Wh
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                    <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
                       {formatNumber(
                         target.share === null ? undefined : target.share * 100,
                         2,
                       )}%
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                    <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
                       {formatNumber(target.averagePowerW, 1)} W
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                    <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
                       {formatNumber(target.peakPowerW, 1)} W
                     </td>
-                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                    <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
                       {formatNumber(target.peakCurrentA, 1)} A
                     </td>
                     <td className="px-3 py-2 align-top">
@@ -444,30 +467,22 @@ export function SupplyLimitSimulator({
                           确认同构电机组
                         </label>
                       ) : null}
-                      {draft.enabled ? (
-                        <span id={statusId} className="mt-1 block" aria-live="polite">
-                          {conflict ? (
-                            <span className="text-[10px] text-danger">
-                              与另一个已启用的上级或下级路径冲突
-                            </span>
-                          ) : nodeErrors.length > 0 ? (
-                            <span className="text-[10px] text-danger">
-                              {nodeErrors[0]}
-                            </span>
-                          ) : (
-                            <LimitStatus
-                              draft={draft}
-                              peakCurrentA={target.peakCurrentA}
-                              hasError={Boolean(target.unavailableReason)}
-                              aggregateConfirmationMissing={aggregateConfirmationMissing}
-                              parsedLimit={parsedLimit}
-                              simulationEnabled={simulationEnabled && estimate !== null}
-                            />
-                          )}
+                      {validationMessage ? (
+                        <span
+                          id={statusId}
+                          className={[
+                            "mt-1 block text-[10px]",
+                            aggregateConfirmationMissing
+                              ? "text-warn"
+                              : "text-danger",
+                          ].join(" ")}
+                          aria-live="polite"
+                        >
+                          {validationMessage}
                         </span>
                       ) : null}
                     </td>
-                    <td className="px-4 py-2.5 text-center align-top">
+                    <td className="px-4 py-2.5 align-top">
                       <button
                         type="button"
                         role="switch"
@@ -479,14 +494,16 @@ export function SupplyLimitSimulator({
                           onUpdateDraft(target.id, { enabled: !draft.enabled })
                         }
                         className={[
-                          "relative inline-flex h-7 w-12 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
-                          draft.enabled ? "bg-brand" : "bg-line-strong",
+                          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
+                          draft.enabled
+                            ? "border-brand bg-brand"
+                            : "border-ink-faint/70 bg-surface-2",
                         ].join(" ")}
                       >
                         <span
                           className={[
-                            "absolute top-1 size-5 rounded-full bg-white shadow-sm transition-transform",
-                            draft.enabled ? "translate-x-6" : "translate-x-1",
+                            "pointer-events-none absolute left-0.5 top-0.5 size-5 rounded-full border border-line bg-white shadow-sm transition-transform",
+                            draft.enabled ? "translate-x-5" : "translate-x-0",
                           ].join(" ")}
                           aria-hidden
                         />
@@ -527,42 +544,6 @@ export function SupplyLimitSimulator({
       {simulationEnabled && estimate ? <SupplyLimitResults estimate={estimate} /> : null}
       <SupplyLimitHelp />
     </div>
-  );
-}
-
-function LimitStatus({
-  draft,
-  peakCurrentA,
-  parsedLimit,
-  hasError,
-  aggregateConfirmationMissing,
-  simulationEnabled,
-}: {
-  draft: SupplyLimitDraft;
-  peakCurrentA: number | undefined;
-  parsedLimit: number | null;
-  hasError: boolean;
-  aggregateConfirmationMissing: boolean;
-  simulationEnabled: boolean;
-}) {
-  if (!draft.enabled) return <span className="text-[11px] text-ink-faint">未启用</span>;
-  if (hasError) return <span className="text-[11px] text-danger">需要修正</span>;
-  if (aggregateConfirmationMissing) {
-    return <span className="text-[11px] text-warn">等待同构确认</span>;
-  }
-  if (parsedLimit === null) {
-    return <span className="text-[11px] text-danger">输入无效</span>;
-  }
-  if (parsedLimit === 0) {
-    return <span className="text-[11px] text-warn">理论关闭场景</span>;
-  }
-  if (peakCurrentA !== undefined && parsedLimit >= peakCurrentA) {
-    return <span className="text-[11px] text-ink-faint">当前范围不会触发</span>;
-  }
-  return (
-    <span className="text-[11px] text-ok">
-      {simulationEnabled ? "模拟中" : "预计会触发"}
-    </span>
   );
 }
 
@@ -636,47 +617,52 @@ function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
       ) : null}
 
       <div className="overflow-x-auto border-t border-line">
-        <table className="w-full min-w-[1120px] text-left text-xs">
+        <table className="w-full min-w-[980px] table-fixed text-left text-xs">
+          <colgroup>
+            <col className="w-[260px]" />
+            <col />
+            <col />
+            <col />
+            <col />
+            <col />
+            <col />
+          </colgroup>
           <thead className="bg-surface-2 text-[10px] uppercase tracking-wider text-ink-faint">
             <tr>
-              <th className="px-4 py-2.5 font-semibold">EnergyLogger 路径</th>
-              <th className="px-3 py-2.5 text-right font-semibold">限制</th>
-              <th className="px-3 py-2.5 text-right font-semibold">峰值电流</th>
-              <th className="px-3 py-2.5 text-right font-semibold">峰值功率</th>
-              <th className="px-3 py-2.5 text-right font-semibold">能量</th>
-              <th className="px-3 py-2.5 text-right font-semibold">节省</th>
-              <th className="px-3 py-2.5 text-right font-semibold">限流时间</th>
-              <th className="px-3 py-2.5 font-semibold">状态</th>
+              <th className="px-4 py-2.5 font-semibold">路径</th>
+              <th className="px-3 py-2.5 font-semibold">限制</th>
+              <th className="px-3 py-2.5 font-semibold">峰值电流</th>
+              <th className="px-3 py-2.5 font-semibold">峰值功率</th>
+              <th className="px-3 py-2.5 font-semibold">能量</th>
+              <th className="px-3 py-2.5 font-semibold">节省</th>
+              <th className="px-3 py-2.5 font-semibold">限流时间</th>
             </tr>
           </thead>
           <tbody className="divide-y divide-line">
             {estimate.targets.map((target) => (
               <tr key={target.nodeId} className="hover:bg-surface-2/60">
-                <td className="max-w-[360px] px-4 py-2.5">
+                <td className="max-w-[260px] px-4 py-2.5">
                   <span className="block max-w-full truncate font-mono text-ink" title={target.rawPath}>
                     {target.rawPath}
                   </span>
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ink">
+                <td className="px-3 py-2.5 font-mono text-ink">
                   {formatNumber(target.limitA, 1)} A
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ink-dim">
+                <td className="px-3 py-2.5 font-mono text-ink-dim">
                   {formatComparison(target.baseline.peakCurrentA, target.estimated.peakCurrentA, "A", 1)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ink-dim">
+                <td className="px-3 py-2.5 font-mono text-ink-dim">
                   {formatComparison(target.baseline.peakPowerW, target.estimated.peakPowerW, "W", 1)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ink-dim">
+                <td className="px-3 py-2.5 font-mono text-ink-dim">
                   {formatComparison(target.baseline.energyWh, target.estimated.energyWh, "Wh", 3)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ok">
+                <td className="px-3 py-2.5 font-mono text-ok">
                   {formatNumber(target.energySavedWh, 3)} Wh · {formatPercent(target.energySavedPercent, 2)}
                 </td>
-                <td className="px-3 py-2.5 text-right font-mono text-ink-dim">
+                <td className="px-3 py-2.5 font-mono text-ink-dim">
                   {formatDuration(target.clippedDurationSeconds)} · {formatNumber(target.clippedRangeFraction * 100, 1)}%
-                </td>
-                <td className="px-3 py-2.5">
-                  <TargetEstimateStatus warnings={target.warnings} />
                 </td>
               </tr>
             ))}
@@ -762,23 +748,6 @@ function SupplyLimitHelp() {
         </div>
       </div>
     </aside>
-  );
-}
-
-function TargetEstimateStatus({ warnings }: { warnings: SupplyLimitEstimate["targets"][number]["warnings"] }) {
-  if (warnings.length === 0) return <span className="text-ok">正常</span>;
-  const onlyNotTriggered = warnings.every((warning) => warning.code === "LIMIT_NOT_TRIGGERED");
-  return (
-    <details className={onlyNotTriggered ? "text-ink-faint" : "text-warn"}>
-      <summary className="cursor-pointer outline-none focus-visible:ring-2 focus-visible:ring-brand/50">
-        {onlyNotTriggered ? "未触发" : `${warnings.length} 条提示`}
-      </summary>
-      <ul className="mt-1 min-w-64 list-disc space-y-1 pl-4 text-[10px] leading-4">
-        {warnings.map((warning) => (
-          <li key={`${warning.code}:${warning.message}`}>{warning.message}</li>
-        ))}
-      </ul>
-    </details>
   );
 }
 
