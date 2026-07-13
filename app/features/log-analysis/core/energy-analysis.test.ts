@@ -39,11 +39,39 @@ describe("generic EnergyLogger analysis", () => {
       energyWh: 3,
       averagePowerW: 10_800,
       peakPowerW: 240,
+      peakPowerTimestampUs: 2_000_000,
       peakCurrentA: 20,
+      peakCurrentTimestampUs: 2_000_000,
     });
     expect(
       result.dataset.quality.issues.filter((issue) => issue.code === "OPTIONAL_SERIES_MISSING"),
     ).toHaveLength(6);
+  });
+
+  it("accepts a legacy aggregate path with one trailing slash", async () => {
+    const { builder, entries } = buildEnergyFixture({ rawPath: "swerve/" });
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 120, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 20, power: 240, energy: 3 });
+
+    const result = await analyzeWpiLog(builder.build());
+
+    expect(result.dataset.subsystems).toHaveLength(1);
+    expect(result.dataset.subsystems[0]).toMatchObject({
+      id: "swerve",
+      rawPath: "swerve/",
+      parentId: null,
+      depth: 0,
+    });
+    expect(result.range.subsystems[0].energyWh).toBe(3);
+  });
+
+  it("still rejects empty hierarchy segments outside the legacy trailing slash", async () => {
+    const { builder, entries } = buildEnergyFixture({ rawPath: "swerve//drive" });
+    appendEnergySample(builder, entries, 1_000_000, { current: 1, power: 1, energy: 1 });
+
+    await expect(parseEnergyLog(builder.build())).rejects.toSatisfy((error: unknown) =>
+      errorHasCode(error, "INVALID_DYNAMIC_PATH"),
+    );
   });
 
   it("does not change metrics when every subsystem label is renamed", async () => {
@@ -68,14 +96,77 @@ describe("generic EnergyLogger analysis", () => {
   it("uses sample-and-hold for instantaneous values in a selected range", async () => {
     const { builder, entries } = buildEnergyFixture();
     appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 10, power: 100, energy: 1 });
     appendEnergySample(builder, entries, 3_000_000, { current: 30, power: 300, energy: 3 });
     const dataset = await parseEnergyLog(builder.build());
 
     const range = analyzeEnergyRange(dataset, { startUs: 1_500_000, endUs: 2_500_000 });
 
     expect(range.totals.peakPowerW).toBe(100);
+    expect(range.totals.peakPowerTimestampUs).toBe(1_500_000);
     expect(range.totals.peakCurrentA).toBe(10);
+    expect(range.totals.peakCurrentTimestampUs).toBe(1_500_000);
+    expect(range.subsystems[0]).toMatchObject({
+      peakPowerTimestampUs: 1_500_000,
+      peakCurrentTimestampUs: 1_500_000,
+    });
     expect(range.totals.energyWh).toBe(0);
+  });
+
+  it("reports the exact selection-start timestamp for a peak sampled at the boundary", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 30, power: 300, energy: 2 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 20, power: 200, energy: 3 });
+    const dataset = await parseEnergyLog(builder.build());
+
+    const range = analyzeEnergyRange(dataset, { startUs: 2_000_000, endUs: 2_500_000 });
+
+    expect(range.totals).toMatchObject({
+      peakPowerW: 300,
+      peakPowerTimestampUs: 2_000_000,
+      peakCurrentA: 30,
+      peakCurrentTimestampUs: 2_000_000,
+    });
+  });
+
+  it("keeps the earliest timestamp when equal peak samples repeat", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 30, power: 300, energy: 2 });
+    appendEnergySample(builder, entries, 2_500_000, { current: 30, power: 300, energy: 2.5 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 20, power: 200, energy: 3 });
+    const dataset = await parseEnergyLog(builder.build());
+
+    const range = analyzeEnergyRange(dataset, { startUs: 1_500_000, endUs: 3_000_000 });
+
+    expect(range.totals).toMatchObject({
+      peakPowerW: 300,
+      peakPowerTimestampUs: 2_000_000,
+      peakCurrentA: 30,
+      peakCurrentTimestampUs: 2_000_000,
+    });
+    expect(range.subsystems[0]).toMatchObject({
+      peakPowerTimestampUs: 2_000_000,
+      peakCurrentTimestampUs: 2_000_000,
+    });
+  });
+
+  it("includes a peak sample exactly at the selection end", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 100, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 20, power: 200, energy: 2 });
+    appendEnergySample(builder, entries, 3_000_000, { current: 40, power: 400, energy: 3 });
+    const dataset = await parseEnergyLog(builder.build());
+
+    const range = analyzeEnergyRange(dataset, { startUs: 1_500_000, endUs: 3_000_000 });
+
+    expect(range.totals).toMatchObject({
+      peakPowerW: 400,
+      peakPowerTimestampUs: 3_000_000,
+      peakCurrentA: 40,
+      peakCurrentTimestampUs: 3_000_000,
+    });
   });
 
   it("segments cumulative resets and sums positive epoch deltas", async () => {
@@ -196,6 +287,20 @@ describe("generic EnergyLogger analysis", () => {
     const root = "/UnknownTeam/RealOutputs/energyLogger";
     for (const family of ["current", "power", "energy"] as const) {
       const entry = builder.start(`${root}/${family}/arm/left`, "double");
+      builder.double(entry, 1_000_000, 1);
+    }
+
+    await expect(parseEnergyLog(builder.build())).rejects.toSatisfy((error: unknown) =>
+      errorHasCode(error, "PATH_NORMALIZATION_COLLISION"),
+    );
+  });
+
+  it("rejects a trailing-slash path that collides with its canonical path", async () => {
+    const { builder, entries } = buildEnergyFixture({ rawPath: "swerve/" });
+    appendEnergySample(builder, entries, 1_000_000, { current: 1, power: 1, energy: 1 });
+    const root = "/UnknownTeam/RealOutputs/energyLogger";
+    for (const family of ["current", "power", "energy"] as const) {
+      const entry = builder.start(`${root}/${family}/swerve`, "double");
       builder.double(entry, 1_000_000, 1);
     }
 

@@ -1,6 +1,5 @@
-import { FileUp, LockKeyhole, TriangleAlert } from "lucide-react";
+import { FileUp, TriangleAlert } from "lucide-react";
 import { useRef, useState, type DragEvent } from "react";
-import { formatBytes } from "./format";
 
 export function FileDropZone({
   busy = false,
@@ -30,18 +29,11 @@ export function FileDropZone({
   return (
     <section className="mx-auto flex min-h-[calc(100dvh-12rem)] max-w-5xl items-center justify-center px-3 py-8">
       <div className="w-full max-w-3xl">
-        <div className="mb-7">
-          <h1 className="text-2xl font-semibold tracking-tight text-ink">Analyze robot energy</h1>
-          <p className="mt-1.5 text-sm text-ink-dim">
-            Select a WPILOG recorded by a robot using NI EnergyLogger.
-          </p>
-        </div>
-
         <div
           role="button"
           tabIndex={0}
           aria-busy={busy}
-          aria-label="Choose a WPILOG file"
+          aria-label="选择 WPILOG 文件"
           onClick={() => !busy && inputRef.current?.click()}
           onKeyDown={(event) => {
             if (!busy && (event.key === "Enter" || event.key === " ")) inputRef.current?.click();
@@ -73,17 +65,17 @@ export function FileDropZone({
             </span>
             <div aria-live="polite">
               <p className="text-base font-semibold text-ink">
-                {busy ? progress?.message ?? "Reading WPILOG…" : "Drop a .wpilog file here"}
+                {busy ? progress?.message ?? "正在读取 WPILOG…" : "将 .wpilog 文件拖到此处"}
               </p>
               <p className="mt-1 text-sm text-ink-dim">
-                {busy ? `${formatNumberSafe((progress?.ratio ?? 0) * 100)}%` : "or click to browse"}
+                {busy ? `${formatNumberSafe((progress?.ratio ?? 0) * 100)}%` : "或点击选择文件"}
               </p>
             </div>
             {busy ? (
               <div
                 className="h-1.5 overflow-hidden rounded-full bg-surface-2"
                 role="progressbar"
-                aria-label={progress?.message ?? "Analyzing WPILOG"}
+                aria-label={progress?.message ?? "正在分析 WPILOG"}
                 aria-valuemin={0}
                 aria-valuemax={100}
                 aria-valuenow={Math.round((progress?.ratio ?? 0) * 100)}
@@ -94,10 +86,6 @@ export function FileDropZone({
                 />
               </div>
             ) : null}
-            <p className="mx-auto inline-flex items-center gap-2 text-xs text-ink-faint">
-              <LockKeyhole className="size-3.5" aria-hidden />
-              Local analysis · file never uploaded
-            </p>
           </div>
         </div>
 
@@ -107,11 +95,6 @@ export function FileDropZone({
             <span>{error}</span>
           </div>
         ) : null}
-
-        <div className="mt-4 flex flex-wrap justify-between gap-2 text-xs text-ink-faint">
-          <span>WPILOG 1.0 · EnergyLogger contract required</span>
-          <span>Recommended maximum: {formatBytes(512 * 1024 * 1024)}</span>
-        </div>
       </div>
     </section>
   );

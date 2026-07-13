@@ -178,7 +178,9 @@ export interface SubsystemRangeMetrics {
   energyWh: number;
   averagePowerW: number;
   peakPowerW: number;
+  peakPowerTimestampUs: number;
   peakCurrentA: number;
+  peakCurrentTimestampUs: number;
   share: number | null;
 }
 
@@ -188,7 +190,9 @@ export interface RangeAnalysis {
     energyWh: number;
     averagePowerW: number;
     peakPowerW: number;
+    peakPowerTimestampUs: number;
     peakCurrentA: number;
+    peakCurrentTimestampUs: number;
     minVoltageV?: number;
     brownoutCount: number;
     brownoutDurationSeconds: number;

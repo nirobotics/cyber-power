@@ -35,8 +35,8 @@ export function ThemeToggle({ className = "" }: { className?: string }) {
         "grid size-9 place-items-center rounded-md border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] shadow-sm transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--background)]",
         className,
       ].join(" ")}
-      aria-label={nextTheme === "light" ? "Switch to light mode" : "Switch to dark mode"}
-      title={nextTheme === "light" ? "Light mode" : "Dark mode"}
+      aria-label={nextTheme === "light" ? "切换到浅色主题" : "切换到深色主题"}
+      title={nextTheme === "light" ? "浅色主题" : "深色主题"}
     >
       <Icon className="size-4" aria-hidden />
     </button>

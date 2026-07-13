@@ -14,7 +14,7 @@ export function formatDuration(seconds: number | undefined) {
 }
 
 export function formatBytes(bytes: number | undefined) {
-  if (bytes === undefined || !Number.isFinite(bytes)) return "Unknown size";
+  if (bytes === undefined || !Number.isFinite(bytes)) return "未知大小";
   const units = ["B", "KiB", "MiB", "GiB"];
   let value = bytes;
   let unit = 0;
@@ -23,13 +23,4 @@ export function formatBytes(bytes: number | undefined) {
     unit += 1;
   }
   return `${formatNumber(value, unit === 0 ? 0 : 2)} ${units[unit]}`;
-}
-
-export function downloadText(filename: string, text: string, type = "text/csv;charset=utf-8") {
-  const url = URL.createObjectURL(new Blob([text], { type }));
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  anchor.click();
-  URL.revokeObjectURL(url);
 }

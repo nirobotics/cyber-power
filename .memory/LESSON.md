@@ -6,3 +6,6 @@
 - Cyber Parts 的飞书 OAuth state、PKCE、组织校验、服务端 Cookie session 和 Supabase `user_profiles` 模式可复用；其服务端 Cookie 本身不提供离线认证，Cyber Power 的离线使用需由 PWA 静态壳和独立的本地授权策略处理。
 - 离线导航缓存不能包含 SSR 用户姓名、头像或稳定身份 ID；在线 loader 只返回无身份的已认证壳，用户资料另由 NetworkOnly 的 `/api/auth/me` 获取。离线权限的剩余边界是同一浏览器配置持有最多 7 天的私有导航缓存。
 - 真实样例末尾最后一条 record 缺 33 bytes，属于可恢复尾截断；恢复必须停在 `lastGoodOffset=62513066`，不能把中段损坏也降级成 warning。
+- 旧版 NI EnergyLogger 可能用单个尾随 `/` 标记聚合节点（如 `swerve/`）；动态路径规范化只应忽略这个尾随标记并保留原始路径，前导/重复分隔符、尾随连字符及与无尾随路径的规范化冲突仍必须拒绝。
+- ECharts 多图共享游标时，`updateAxisPointer` 不能只传 `xAxisIndex/value`；应传真实像素 `x/y` 与 `axesInfo`，并在程序化同步期间抑制回写事件，否则会出现游标往返跳变。React 侧的高频游标更新还应通过 `requestAnimationFrame` 合并为每帧一次。
+- 动态子系统层级表应依据稳定的 `parentId` 关系构造可见行；默认展开状态为空，只显示根节点与孤立节点，用户展开父级后再逐层显示后代，不能用排序后的相邻行或路径字符串猜层级。

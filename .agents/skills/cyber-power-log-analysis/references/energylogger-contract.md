@@ -41,6 +41,8 @@ Do not use team number, `ProjectName`, season, or subsystem allowlists.
 
 EnergyLogger callers choose `<raw-path>`. Slash and hyphen separators express hierarchy; canonical parent IDs use slash. Preserve each raw path for display and reject two distinct raw paths that normalize to the same canonical ID.
 
+Legacy EnergyLogger logs may use one trailing `/` to mark an aggregate node, for example `swerve/`. Ignore that marker when deriving the canonical ID while preserving it in the raw path. Continue to reject leading separators, repeated separators, trailing hyphens, and all other empty hierarchy segments.
+
 Parent series may already aggregate children. Never add an aggregate to its descendants when computing totals. Compare the total against top-level nodes and each aggregate against its direct children; emit reconciliation warnings outside tolerance.
 
 Current and power are instantaneous sample-and-hold state. Energy is cumulative Wh. AdvantageKit may omit unchanged values, so absence of a record is not zero.

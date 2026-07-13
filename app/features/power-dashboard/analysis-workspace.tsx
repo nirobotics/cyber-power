@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AnalysisResult, LogIssue } from "../log-analysis/core";
 import { AnalysisDashboard } from "./analysis-dashboard";
 import { FileDropZone } from "./file-drop-zone";
@@ -8,16 +8,44 @@ type WorkerResponse =
   | { type: "result"; requestId: string; result: AnalysisResult }
   | { type: "error"; requestId: string; error: { name: string; message: string; issues?: LogIssue[] } };
 
-export function AnalysisWorkspace() {
+export type AnalysisWorkspaceChrome = {
+  fileName: string;
+  onReplace: () => void;
+};
+
+export function AnalysisWorkspace({
+  onChromeChange,
+}: {
+  onChromeChange?: (chrome: AnalysisWorkspaceChrome | null) => void;
+}) {
   const workerRef = useRef<Worker | null>(null);
   const requestRef = useRef<string | null>(null);
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [busy, setBusy] = useState(false);
-  const [progress, setProgress] = useState({ ratio: 0, message: "Preparing parser…" });
+  const [progress, setProgress] = useState({ ratio: 0, message: "正在准备解析器…" });
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => () => workerRef.current?.terminate(), []);
+
+  const replace = useCallback(() => {
+    const requestId = requestRef.current;
+    if (requestId) workerRef.current?.postMessage({ type: "cancel", requestId });
+    workerRef.current?.terminate();
+    workerRef.current = null;
+    requestRef.current = null;
+    setBusy(false);
+    setFile(null);
+    setResult(null);
+    setError(null);
+    setProgress({ ratio: 0, message: "正在准备解析器…" });
+  }, []);
+
+  useEffect(() => {
+    onChromeChange?.(file ? { fileName: file.name, onReplace: replace } : null);
+  }, [file, onChromeChange, replace]);
+
+  useEffect(() => () => onChromeChange?.(null), [onChromeChange]);
 
   const analyze = (nextFile: File) => {
     const validationError = validateFile(nextFile);
@@ -38,7 +66,7 @@ export function AnalysisWorkspace() {
     setResult(null);
     setError(null);
     setBusy(true);
-    setProgress({ ratio: 0, message: "Validating WPILOG header…" });
+    setProgress({ ratio: 0, message: "正在验证 WPILOG 文件头…" });
 
     worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
       const message = event.data;
@@ -48,51 +76,46 @@ export function AnalysisWorkspace() {
         const ratio = total > 0 ? message.processedBytes / total : 0;
         setProgress({
           ratio: Math.max(0, Math.min(1, ratio)),
-          message: ratio < 0.12 ? "Reading entry catalog…" : ratio < 0.92 ? "Decoding EnergyLogger series…" : "Computing energy metrics…",
+          message:
+            ratio < 0.12
+              ? "正在读取字段目录…"
+              : ratio < 0.92
+                ? "正在解码 EnergyLogger 序列…"
+                : "正在计算能量指标…",
         });
         return;
       }
       setBusy(false);
       if (message.type === "result") {
-        setProgress({ ratio: 1, message: "Analysis complete" });
+        setProgress({ ratio: 1, message: "分析完成" });
         setResult(message.result);
         return;
       }
       if (message.error.name !== "AbortError") {
-        const issue = message.error.issues?.find((candidate) => candidate.severity === "fatal");
-        setError(issue ? `${issue.code}: ${issue.message}` : message.error.message);
+        setError("无法解析此日志，请确认文件完整且符合 NI EnergyLogger 数据契约。");
       }
     };
 
-    worker.onerror = (event) => {
+    worker.onerror = () => {
       if (requestId !== requestRef.current) return;
       setBusy(false);
-      setError(event.message || "The log analysis worker stopped unexpectedly.");
+      setError("日志分析线程意外停止，请重试。");
     };
 
     worker.postMessage({ type: "analyze", requestId, file: nextFile });
   };
 
-  const replace = () => {
-    const requestId = requestRef.current;
-    if (requestId) workerRef.current?.postMessage({ type: "cancel", requestId });
-    workerRef.current?.terminate();
-    workerRef.current = null;
-    requestRef.current = null;
-    setBusy(false);
-    setFile(null);
-    setResult(null);
-    setError(null);
-    setProgress({ ratio: 0, message: "Preparing parser…" });
-  };
-
-  if (file && result) return <AnalysisDashboard file={file} result={result} onReplace={replace} />;
+  if (file && result) return <AnalysisDashboard result={result} />;
   return <FileDropZone busy={busy} progress={progress} error={error} onFile={analyze} />;
 }
 
 function validateFile(file: File) {
-  if (!file.name.toLowerCase().endsWith(".wpilog")) return "INVALID_WPILOG: Select a file with the .wpilog extension.";
-  if (file.size < 12) return "INVALID_WPILOG: The file is too small to contain a WPILOG header.";
-  if (file.size > 1024 * 1024 * 1024) return "INVALID_WPILOG: Files larger than 1 GiB are not supported in the browser.";
+  if (!file.name.toLowerCase().endsWith(".wpilog")) {
+    return "请选择扩展名为 .wpilog 的文件。";
+  }
+  if (file.size < 12) return "文件太小，无法包含有效的 WPILOG 文件头。";
+  if (file.size > 1024 * 1024 * 1024) {
+    return "浏览器暂不支持大于 1 GiB 的文件。";
+  }
   return null;
 }

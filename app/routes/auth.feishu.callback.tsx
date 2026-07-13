@@ -48,7 +48,7 @@ export async function loader({ request }: Route.LoaderArgs) {
     return callbackFailure(
       session,
       "登录已取消",
-      "飞书授权被取消，未建立 Cyber Power session。",
+      "飞书授权被取消，未建立 Cyber Power 会话。",
       401,
     );
   }

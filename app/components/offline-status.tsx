@@ -35,7 +35,7 @@ export function OfflineStatus() {
   }, []);
 
   const Icon = state === "offline" ? CloudOff : state === "ready" ? Wifi : Cloudy;
-  const label = state === "offline" ? "Offline" : state === "ready" ? "Offline ready" : state === "error" ? "Online only" : "Online";
+  const label = state === "offline" ? "离线" : state === "ready" ? "可离线使用" : state === "error" ? "仅限在线" : "在线";
 
   return (
     <span
@@ -43,7 +43,7 @@ export function OfflineStatus() {
         "inline-flex items-center gap-1.5 text-[11px]",
         state === "offline" ? "text-warn" : state === "ready" ? "text-ok" : "text-ink-faint",
       ].join(" ")}
-      title={state === "ready" ? "Static app shell is cached for offline use." : label}
+      title={state === "ready" ? "应用静态资源已缓存，可离线使用。" : label}
       aria-label={label}
     >
       <Icon className="size-3.5" aria-hidden />

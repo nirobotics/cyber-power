@@ -18,16 +18,16 @@ export const links: Route.LinksFunction = () => [
 ];
 
 export const meta = () => [
-  { title: "Cyber Power · FRC Energy Analysis" },
+  { title: "Cyber Power · FRC 机器人能量分析" },
   {
     name: "description",
-    content: "Local-first WPILOG energy analysis for robots using NI EnergyLogger.",
+    content: "面向正确接入 NI EnergyLogger 的机器人的本地优先 WPILOG 能量分析工具。",
   },
 ];
 
 export function Layout({ children }: { children: ReactNode }) {
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="zh-CN" suppressHydrationWarning>
       <head>
         <meta charSet="utf-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -57,9 +57,9 @@ export default function App() {
 
 export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
   const title = isRouteErrorResponse(error)
-    ? `${error.status} ${error.statusText}`
-    : "Page failed to load";
-  const message = error instanceof Error ? error.message : "Refresh the page and try again.";
+    ? `${error.status} 请求失败`
+    : "页面加载失败";
+  const message = "请刷新页面后重试。";
 
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-center px-6 py-12">
@@ -71,7 +71,7 @@ export function ErrorBoundary({ error }: Route.ErrorBoundaryProps) {
         onClick={() => globalThis.location.reload()}
         className="mt-6 w-fit rounded-md bg-[var(--accent)] px-4 py-2 text-sm font-medium text-[var(--accent-foreground)] transition hover:brightness-110 focus:outline-none focus:ring-2 focus:ring-[var(--accent)]"
       >
-        Reload
+        重新加载
       </button>
     </main>
   );

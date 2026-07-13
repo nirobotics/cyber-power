@@ -193,4 +193,97 @@
   .section-label {
     @apply text-[11px] font-bold uppercase tracking-[0.14em] text-ink-faint;
   }
+
+  .time-range-input {
+    pointer-events: none;
+    appearance: none;
+    background: transparent;
+    outline: none;
+    touch-action: pan-y;
+  }
+
+  .floating-time-range-spacer {
+    height: calc(7rem + env(safe-area-inset-bottom));
+  }
+
+  .time-range-input::-webkit-slider-runnable-track {
+    height: 100%;
+    background: transparent;
+  }
+
+  .time-range-input::-moz-range-track {
+    height: 100%;
+    background: transparent;
+  }
+
+  .time-range-input::-webkit-slider-thumb {
+    pointer-events: auto;
+    appearance: none;
+    cursor: grab;
+  }
+
+  .time-range-input::-moz-range-thumb {
+    pointer-events: auto;
+    cursor: grab;
+  }
+
+  .time-range-input:active::-webkit-slider-thumb {
+    cursor: grabbing;
+  }
+
+  .time-range-input:active::-moz-range-thumb {
+    cursor: grabbing;
+  }
+
+  .time-range-boundary::-webkit-slider-thumb {
+    margin-top: 10px;
+    width: 12px;
+    height: 22px;
+    border: 2px solid rgb(var(--brand));
+    border-radius: 5px;
+    background: rgb(var(--surface));
+    box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  }
+
+  .time-range-boundary::-moz-range-thumb {
+    width: 12px;
+    height: 22px;
+    border: 2px solid rgb(var(--brand));
+    border-radius: 5px;
+    background: rgb(var(--surface));
+    box-shadow: 0 2px 8px rgb(0 0 0 / 28%);
+  }
+
+  .time-range-cursor::-webkit-slider-thumb {
+    margin-top: 12px;
+    width: 16px;
+    height: 16px;
+    border: 3px solid rgb(var(--surface));
+    border-radius: 999px;
+    background: rgb(var(--brand));
+    box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  }
+
+  .time-range-cursor::-moz-range-thumb {
+    width: 16px;
+    height: 16px;
+    border: 3px solid rgb(var(--surface));
+    border-radius: 999px;
+    background: rgb(var(--brand));
+    box-shadow: 0 2px 8px rgb(0 0 0 / 30%);
+  }
+
+  .time-range-boundary:focus-visible::-webkit-slider-thumb,
+  .time-range-cursor:focus-visible::-webkit-slider-thumb {
+    box-shadow:
+      0 0 0 2px rgb(var(--surface)),
+      0 0 0 4px rgb(var(--brand));
+  }
+
+  .time-range-boundary:focus-visible::-moz-range-thumb,
+  .time-range-cursor:focus-visible::-moz-range-thumb {
+    box-shadow:
+      0 0 0 2px rgb(var(--surface)),
+      0 0 0 4px rgb(var(--brand));
+  }
 }

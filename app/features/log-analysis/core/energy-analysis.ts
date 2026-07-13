@@ -319,7 +319,10 @@ function requireFinite(series: MutableSeries, label: string): void {
 }
 
 function normalizeDynamicPath(rawPath: string): string {
-  const parts = rawPath.split(/[/-]/);
+  // Older EnergyLogger versions used one trailing slash to mark an aggregate node.
+  // It is not a hierarchy segment, but every other empty segment remains invalid.
+  const hierarchyPath = rawPath.endsWith("/") ? rawPath.slice(0, -1) : rawPath;
+  const parts = hierarchyPath.split(/[/-]/);
   if (parts.length === 0 || parts.some((part) => part.length === 0)) {
     throw new LogAnalysisError(
       fatalIssue("INVALID_DYNAMIC_PATH", `EnergyLogger path contains an empty segment: ${rawPath}`, {
@@ -524,11 +527,17 @@ function cumulativeDelta(
   return { energy, resets };
 }
 
-function peakNumeric(series: NumericSeries, startUs: number, endUs: number): number {
-  let peak = heldNumeric(series, startUs, 0);
+function peakNumericSample(
+  series: NumericSeries,
+  startUs: number,
+  endUs: number,
+): { value: number; timestampUs: number } {
+  let peak = { value: heldNumeric(series, startUs, 0), timestampUs: startUs };
   let index = upperBound(series.timestampsUs, startUs);
   while (index < series.timestampsUs.length && series.timestampsUs[index] <= endUs) {
-    peak = Math.max(peak, series.values[index]);
+    if (series.values[index] > peak.value) {
+      peak = { value: series.values[index], timestampUs: series.timestampsUs[index] };
+    }
     index += 1;
   }
   return peak;
@@ -1032,6 +1041,8 @@ export function analyzeEnergyRange(
 
   const subsystemMetrics: SubsystemRangeMetrics[] = dataset.subsystems.map((node) => {
     const energyWh = cumulativeDelta(node.energyWh, range.startUs, range.endUs).energy;
+    const peakPower = peakNumericSample(node.powerW, range.startUs, range.endUs);
+    const peakCurrent = peakNumericSample(node.currentA, range.startUs, range.endUs);
     return {
       id: node.id,
       rawPath: node.rawPath,
@@ -1042,8 +1053,10 @@ export function analyzeEnergyRange(
       isAggregate: node.isAggregate,
       energyWh,
       averagePowerW: durationSeconds > 0 ? (energyWh * 3600) / durationSeconds : 0,
-      peakPowerW: peakNumeric(node.powerW, range.startUs, range.endUs),
-      peakCurrentA: peakNumeric(node.currentA, range.startUs, range.endUs),
+      peakPowerW: peakPower.value,
+      peakPowerTimestampUs: peakPower.timestampUs,
+      peakCurrentA: peakCurrent.value,
+      peakCurrentTimestampUs: peakCurrent.timestampUs,
       share: null,
     };
   });
@@ -1073,13 +1086,25 @@ export function analyzeEnergyRange(
     absoluteTolerance,
     DEFAULT_RELATIVE_TOLERANCE,
   );
+  const peakPower = peakNumericSample(
+    dataset.series.totalPowerW,
+    range.startUs,
+    range.endUs,
+  );
+  const peakCurrent = peakNumericSample(
+    dataset.series.totalCurrentA,
+    range.startUs,
+    range.endUs,
+  );
   return {
     range: { ...range, durationSeconds },
     totals: {
       energyWh: totalEnergy,
       averagePowerW: durationSeconds > 0 ? (totalEnergy * 3600) / durationSeconds : 0,
-      peakPowerW: peakNumeric(dataset.series.totalPowerW, range.startUs, range.endUs),
-      peakCurrentA: peakNumeric(dataset.series.totalCurrentA, range.startUs, range.endUs),
+      peakPowerW: peakPower.value,
+      peakPowerTimestampUs: peakPower.timestampUs,
+      peakCurrentA: peakCurrent.value,
+      peakCurrentTimestampUs: peakCurrent.timestampUs,
       minVoltageV: dataset.series.batteryVoltageV
         ? minNumeric(dataset.series.batteryVoltageV, range.startUs, range.endUs)
         : undefined,

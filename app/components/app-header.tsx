@@ -1,9 +1,8 @@
 import type { LucideIcon } from "lucide-react";
-import { Boxes } from "lucide-react";
+import { RefreshCw, Zap } from "lucide-react";
 import { NavLink } from "react-router";
 import { ThemeToggle } from "./theme-toggle";
 import { UserStatus } from "./user-status";
-import { OfflineStatus } from "./offline-status";
 import type { PublicUser } from "../lib/auth-types";
 
 export function AppHeader({
@@ -14,7 +13,8 @@ export function AppHeader({
   authLoading,
   allowGuest,
   onLogin,
-  Icon = Boxes,
+  onReplaceFile,
+  Icon = Zap,
   demoHref,
 }: {
   appName: string;
@@ -24,6 +24,7 @@ export function AppHeader({
   authLoading: boolean;
   allowGuest: boolean;
   onLogin: () => void;
+  onReplaceFile?: (() => void) | null;
   Icon?: LucideIcon;
   demoHref?: string;
 }) {
@@ -57,10 +58,20 @@ export function AppHeader({
                     : "border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] hover:bg-[var(--background)] hover:text-[var(--foreground)]",
                 ].join(" ")}
               >
-                DEMO
+                演示
               </NavLink>
             ) : null}
-            <OfflineStatus />
+            {onReplaceFile ? (
+              <button
+                type="button"
+                onClick={onReplaceFile}
+                className="grid size-9 shrink-0 place-items-center rounded-md border border-[var(--border)] bg-[var(--panel)] text-[var(--muted)] transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
+                aria-label="替换当前文件"
+                title="替换文件"
+              >
+                <RefreshCw className="size-4" aria-hidden />
+              </button>
+            ) : null}
             <ThemeToggle className="shrink-0" />
             <UserStatus user={user} loading={authLoading} allowGuest={allowGuest} onLogin={onLogin} />
           </div>

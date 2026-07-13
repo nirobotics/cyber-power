@@ -12,12 +12,12 @@ export function AppFooter({
       <div className="mx-auto grid max-w-[1680px] grid-cols-1 items-center gap-2 px-4 py-2 text-center sm:grid-cols-[1fr_auto_1fr] sm:px-6">
         <img
           src={logoSrc}
-          alt="Next Innovation"
+          alt="Next Innovation 标志"
           className="mx-auto h-6 w-auto max-w-40 object-contain sm:mx-0"
           loading="lazy"
         />
         <p className="text-[11px] text-[var(--muted)]">
-          Copyright © 2026 {companyName}. All rights reserved.
+          © 2026 {companyName}。保留所有权利。
         </p>
         <p className="text-[11px] text-[var(--muted)] sm:justify-self-end">v{version}</p>
       </div>

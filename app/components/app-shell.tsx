@@ -14,6 +14,7 @@ export function AppShell({
   allowGuest,
   busy,
   onLogin,
+  onReplaceFile,
   children,
   Icon,
   demoHref,
@@ -28,6 +29,7 @@ export function AppShell({
   allowGuest: boolean;
   busy: boolean;
   onLogin: () => void;
+  onReplaceFile?: (() => void) | null;
   children: ReactNode;
   Icon?: LucideIcon;
   demoHref?: string;
@@ -49,6 +51,7 @@ export function AppShell({
         authLoading={authLoading}
         allowGuest={allowGuest}
         onLogin={onLogin}
+        onReplaceFile={onReplaceFile}
         Icon={Icon}
         demoHref={demoHref}
       />

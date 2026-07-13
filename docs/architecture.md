@@ -8,10 +8,10 @@
   -> Web Worker 分块解析 WPILOG 1.0
   -> EnergyLogger 契约发现与校验
   -> typed arrays + 区间分析
-  -> ECharts、指标卡、表格、CSV
+  -> ECharts、指标卡和表格
 ```
 
-原始日志、解析后的时序数据、区间选择和 CSV 都留在浏览器设备上。服务端不接收日志，Supabase 不存储日志或分析结果。
+原始日志、解析后的时序数据和区间选择都留在浏览器设备上。服务端不接收日志，Supabase 不存储日志或分析结果。
 
 ## WPILOG 与 EnergyLogger
 
