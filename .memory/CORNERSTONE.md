@@ -1,9 +1,10 @@
-- Cyber Power 是面向 NI Robotics 及其他正确接入 NI EnergyLogger 的 FRC 队伍的浏览器端 `.wpilog` 能量分析工具；完整分析应用已上线，正式开放仅待补齐两项服务端密钥并完成真实飞书登录验收。
-- 项目治理使用 `cyber-apps`、`ni-github-repo` 和 `ni-memory`；三套项目级 skill vendoring 自 `nirobotics/agents` main 的 `23bb3897bae115a3ffa237a63ac9c47c1a79d88a`。
-- 飞书认证入口为 `/auth/login`、`/auth/feishu/callback` 和 `/auth/logout`，使用 state、PKCE S256、14 天签名 HttpOnly Cookie、租户白名单和服务端 Supabase client；生产 callback 固定为 `https://power.team8214.com/auth/feishu/callback`。
-- Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，live 数据库只有 server-only 的 `public.user_profiles` 身份映射表；RLS/FORCE RLS 已开启，`anon` 与 `authenticated` 无表权限且无 policy。
-- NI Corporate Vercel 项目 `cyber-power` 已设为 React Router / Node 22，`power.team8214.com` 已指向 Ready production deployment；当前仅缺 Production 的 `FEISHU_APP_SECRET` 与 `SUPABASE_SECRET_KEY`，所以登录页会安全禁用登录按钮。
-- WPILOG 解析、EnergyLogger 区间分析、Web Worker、CLI、交互式仪表盘、飞书认证和受限离线壳均已实现；真实私有金标日志不进入 Git。
-- 项目级 `cyber-power-log-analysis` skill 固化通用数据契约和金标，明确禁止按队号、ProjectName、赛季或固定子系统做兼容性判断。
-- Node 22.23.1 / pnpm 11.5.0 下 43 项测试、typecheck、lint、生产 build、37 项私有金标断言和完整依赖审计均通过；audit 为 0 vulnerabilities。
-- GitHub `main` 与本地工作分支保持同步；生产 SSR、PWA 静态资源和登录页已通过 HTTP 与真实浏览器验收，控制台无 hydration error。
+- Cyber Power 是面向任何正确接入 NI EnergyLogger 的 FRC 队伍的浏览器端 `.wpilog` 能量分析工具；兼容性只由 WPILOG 1.0 与 EnergyLogger 数据契约决定，不按队号、ProjectName、赛季或固定子系统列表判断。
+- 项目治理使用 `cyber-apps`、`ni-github-repo`、`ni-memory` 与项目级 `cyber-power-log-analysis`；前三套 skill vendoring 自 `nirobotics/agents` main 的 `23bb3897bae115a3ffa237a63ac9c47c1a79d88a`。
+- 日志在浏览器 Web Worker 内解析，服务端、Supabase 与 Vercel 不接收原始日志、解析结果或分析区间；真实私有金标日志不进入 Git。
+- 飞书认证使用 OAuth v2、state、PKCE S256、tenant 白名单、14 天签名 HttpOnly Cookie 与最小公开用户 DTO；生产 callback 固定为 `https://power.team8214.com/auth/feishu/callback`，真实组织账号已通过生产登录验收。
+- Supabase 项目 ref 为 `dqkvvtrpcylnqpabfwzu`，只保存 server-only 的 `public.user_profiles` 身份映射；RLS/FORCE RLS 开启，浏览器角色无表权限且无 policy。
+- NI Corporate Vercel 项目 `cyber-power` 使用 React Router 与 Node 22，Git Integration 跟踪 GitHub `main`；`https://power.team8214.com` 已指向 Ready production deployment。
+- 分析界面固定为“整机 / 子系统 / 数据质量”三页：整机为总指标与电压、总电流、总功率、累计能量四图；子系统为能量占比、独立功率/电流/能量图和默认折叠的层级明细；数据质量为左侧可信日志范围与右侧验证结果。
+- 所有图表共享一个按帧合并的时间游标与区间；底部 fixed 组件是唯一拖动入口，包含 AUTO/ENABLED/BROWNOUT 全局区间，电压图包含 Brownout 阈值线，峰值功率/电流卡可定位到精确时间。
+- 解析器支持旧版 EnergyLogger 用单个尾随 `/` 标记聚合节点；前导/重复分隔符、中间空段、尾随连字符和规范化冲突仍必须 fatal，仅最后一条不完整 record 可降级恢复。
+- 2026-07-13 在 Node 22.23.1 / pnpm 11.5.0 下 61 项测试、typecheck、lint、生产 build 与 PWA 生成通过；59.6 MiB 金标及两份尾随 `/` hopper 日志完整 CLI 分析均无 fatal，生产浏览器三页、峰值定位、显隐、逐级展开和控制台验收通过。
