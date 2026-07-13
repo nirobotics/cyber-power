@@ -5,4 +5,5 @@
 - NI Corporate Vercel 项目 `cyber-power` 已设为 React Router / Node 22，`power.team8214.com` 已指向 Ready production deployment；当前仅缺 Production 的 `FEISHU_APP_SECRET` 与 `SUPABASE_SECRET_KEY`，所以登录页会安全禁用登录按钮。
 - WPILOG 解析、EnergyLogger 区间分析、Web Worker、CLI、交互式仪表盘、飞书认证和受限离线壳均已实现；真实私有金标日志不进入 Git。
 - 项目级 `cyber-power-log-analysis` skill 固化通用数据契约和金标，明确禁止按队号、ProjectName、赛季或固定子系统做兼容性判断。
-- GitHub `main@bad844b` 为当前生产源码；生产 SSR、PWA 静态资源和登录页已通过 HTTP 与真实浏览器验收，控制台无 hydration error。
+- Node 22.23.1 / pnpm 11.5.0 下 43 项测试、typecheck、lint、生产 build、37 项私有金标断言和完整依赖审计均通过；audit 为 0 vulnerabilities。
+- GitHub `main` 与本地工作分支保持同步；生产 SSR、PWA 静态资源和登录页已通过 HTTP 与真实浏览器验收，控制台无 hydration error。

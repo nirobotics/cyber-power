@@ -1,6 +1,7 @@
 # cyber-power
 
 ![Next Innovation](https://img.shields.io/badge/Next-Innovation-8A2BE2?labelColor=555555&style=flat)
+![Lang zh-CN](https://img.shields.io/badge/Lang-zh--CN-2DBA4E?labelColor=555555&style=flat)
 ![Node 22](https://img.shields.io/badge/Node-22-2DBA4E?labelColor=555555&style=flat)
 
 Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG 本地能量分析工具。

@@ -1,3 +1,5 @@
+- Worker 取消或同 `requestId` 替换时必须先从 current controller 状态中删除或替换旧 controller，再调用 `abort()`；否则同步 abort listener 仍可能回传旧 progress/error。
+- pnpm 11 的依赖 `overrides` 应放在根 `pnpm-workspace.yaml`；安全补丁优先使用精确来源选择器，避免上游未来升级后仍被长期强制降级或锁死。
 - Vercel 的 React Router 项目必须把 Framework Preset 设为 `react-router`；设为 `Other` 时构建表面成功但只上传静态文件，所有应用路由都会是平台级 404。
 - Tailwind 4 全局样式在 React Router/Vercel 中应从 root 使用 `import "./app.css"`；`app.css?url` 会在 client 与 SSR 环境分别生成不同 CSS URL并触发 React 19 hydration #418。
 - Supabase `apply_migration` 会按执行时刻登记远端版本号；应用 live migration 后应把本地 migration 文件时间戳对齐到该版本，避免后续 `db push` 重复执行同一 DDL。

@@ -54,6 +54,7 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 - WPILOG header、control record、typed payload、尾截断和中段损坏；
 - 通用 UnknownTeam EnergyLogger root，确保无队伍白名单；
 - sample-and-hold、能量 reset、区间、Brownout、DS mode、动态层级和 reconciliation；
-- 飞书 state、PKCE、returnTo、生产 callback、签名 Cookie 与用户资料转换；
+- 飞书 state、PKCE、returnTo、生产 callback、签名 Cookie、code exchange、tenant 校验与 Supabase 用户资料 upsert；
+- Worker progress/result/error、typed-array transferable、取消与同 requestId 替换；
 - 图表 min/max 包络抽样，确保功率和电流尖峰不会被等步长抽样丢失；
 - React Router 生产 build、PWA manifest/service worker 与客户端 secret 扫描。
