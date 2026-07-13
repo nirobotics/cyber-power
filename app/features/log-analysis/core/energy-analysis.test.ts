@@ -235,6 +235,7 @@ describe("generic EnergyLogger analysis", () => {
     expect(result.range.totals.brownoutCount).toBe(1);
     expect(result.range.totals.brownoutDurationSeconds).toBeCloseTo(0.1);
     expect(result.range.totals.enabledDurationSeconds).toBeCloseTo(0.8);
+    expect(result.range.totals.effectiveDurationSeconds).toBeCloseTo(0.8);
     expect(result.dataset.segments.modes.map((segment) => segment.mode)).toEqual([
       "disabled",
       "autonomous",
@@ -265,6 +266,7 @@ describe("generic EnergyLogger analysis", () => {
       energyWh: 12,
       averagePowerW: 7_200,
       enabledDurationSeconds: 4,
+      effectiveDurationSeconds: 4,
     });
     expect(result.range.subsystems[0]).toMatchObject({
       energyWh: 12,
@@ -279,6 +281,7 @@ describe("generic EnergyLogger analysis", () => {
       energyWh: 11,
       averagePowerW: 8_400,
       enabledDurationSeconds: 3,
+      effectiveDurationSeconds: 3,
     });
     expect(clipped.subsystems[0]).toMatchObject({
       energyWh: 11,
@@ -298,6 +301,7 @@ describe("generic EnergyLogger analysis", () => {
       energyWh: 8,
       averagePowerW: 0,
       enabledDurationSeconds: 0,
+      effectiveDurationSeconds: 0,
     });
     expect(result.range.subsystems[0]).toMatchObject({
       energyWh: 8,
@@ -316,6 +320,7 @@ describe("generic EnergyLogger analysis", () => {
       energyWh: 8,
       averagePowerW: 14_400,
       enabledDurationSeconds: 0,
+      effectiveDurationSeconds: 2,
     });
     expect(result.range.subsystems[0]).toMatchObject({
       energyWh: 8,

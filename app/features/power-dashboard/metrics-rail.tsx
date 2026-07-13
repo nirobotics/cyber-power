@@ -19,7 +19,7 @@ export function MetricsRail({
     onClick?: () => void;
     hint?: string;
   }> = [
-    { label: "持续时间", value: formatDuration(analysis.range.durationSeconds) },
+    { label: "有效持续时间", value: formatDuration(totals.effectiveDurationSeconds) },
     { label: "总能量", value: `${formatNumber(totals.energyWh, 3)} Wh` },
     { label: "平均功率", value: `${formatNumber(totals.averagePowerW, 1)} W` },
     { label: "峰值功率", value: `${formatNumber(totals.peakPowerW, 1)} W`, onClick: onLocatePeakPower, hint: "定位峰值功率时间" },

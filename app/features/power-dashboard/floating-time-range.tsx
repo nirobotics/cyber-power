@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { EnergyLogDataset, TimeRange } from "../log-analysis/core";
+import type { EnergyLogDataset, TimeInterval, TimeRange } from "../log-analysis/core";
 import { formatNumber } from "./format";
 import {
   modeBoundaryTimestamps,
@@ -19,19 +19,13 @@ const MODE_COLORS = {
 const MODE_LABELS = {
   disabled: "禁用",
   autonomous: "AUTO",
-  teleop: "ENABLED",
+  teleop: "TELEOP",
   enabled: "ENABLED",
   test: "TEST",
 } as const;
 
 const BROWNOUT_COLOR = "rgba(248, 113, 113, .88)";
 const SNAP_RADIUS_PX = 8;
-
-const LEGEND_ITEMS = [
-  { label: "AUTO", color: MODE_COLORS.autonomous },
-  { label: "ENABLED", color: MODE_COLORS.enabled },
-  { label: "BROWNOUT", color: BROWNOUT_COLOR },
-] as const;
 
 export function FloatingTimeRange({
   dataset,
@@ -66,6 +60,18 @@ export function FloatingTimeRange({
     () => modeBoundaryTimestamps(dataset.segments.modes, { startUs: minimumUs, endUs: maximumUs }),
     [dataset.segments.modes, maximumUs, minimumUs],
   );
+  const brownoutMarkers = useMemo(
+    () => buildBrownoutMarkers(dataset.segments.brownouts, minimumUs, maximumUs),
+    [dataset.segments.brownouts, maximumUs, minimumUs],
+  );
+  const legendItems = [
+    { label: "AUTO", color: MODE_COLORS.autonomous },
+    { label: "TELEOP", color: MODE_COLORS.teleop },
+    ...(dataset.segments.modes.some((segment) => segment.mode === "enabled")
+      ? [{ label: "ENABLED", color: MODE_COLORS.enabled }]
+      : []),
+    { label: "BROWNOUT", color: BROWNOUT_COLOR },
+  ];
 
   useEffect(() => {
     pendingRangeRef.current = { startUs, endUs };
@@ -115,7 +121,7 @@ export function FloatingTimeRange({
             role="group"
             aria-label="机器人状态图例"
           >
-            {LEGEND_ITEMS.map((item) => (
+            {legendItems.map((item) => (
               <span key={item.label} className="inline-flex items-center gap-1">
                 <span
                   className="size-2 rounded-sm border border-line/70"
@@ -151,6 +157,25 @@ export function FloatingTimeRange({
               className="pointer-events-none absolute top-5 h-4 rounded border border-brand/70 bg-brand/10"
               style={{ left: `${startPercent}%`, width: `${Math.max(0, endPercent - startPercent)}%` }}
             />
+            {brownoutMarkers.length > 0 ? (
+              <div
+                className="pointer-events-none absolute inset-x-0 top-5 z-20 h-4"
+                role="img"
+                aria-label={`Brownout 发生位置，共 ${brownoutMarkers.length} 处；红色叉号中心对应完整日志时间轴上的发生时刻。`}
+                data-brownout-marker-count={brownoutMarkers.length}
+              >
+                {brownoutMarkers.map((marker) => (
+                  <span
+                    key={marker.startUs}
+                    className="absolute top-1/2 -translate-x-1/2 -translate-y-1/2 text-[14px] font-black leading-none text-danger"
+                    style={{ left: `${marker.positionPercent}%`, textShadow: "0 0 2px rgb(var(--surface))" }}
+                    aria-hidden="true"
+                  >
+                    ×
+                  </span>
+                ))}
+              </div>
+            ) : null}
             <div
               className="pointer-events-none absolute top-0 z-20 -translate-x-1/2 rounded bg-brand px-1.5 py-0.5 font-mono text-[10px] font-semibold text-brand-fg shadow"
               style={{ left: `${Math.max(5, Math.min(95, cursorPercent))}%` }}
@@ -235,6 +260,20 @@ function intervalStyle(startUs: number, endUs: number, minimumUs: number, maximu
   const left = rangePercent(startUs, minimumUs, maximumUs);
   const right = rangePercent(endUs, minimumUs, maximumUs);
   return { left: `${left}%`, width: `${Math.max(0, right - left)}%`, background };
+}
+
+export function buildBrownoutMarkers(
+  intervals: readonly Pick<TimeInterval, "startUs">[],
+  minimumUs: number,
+  maximumUs: number,
+) {
+  const startsUs = [...new Set(intervals
+    .map((interval) => interval.startUs)
+    .filter(Number.isFinite))];
+  return startsUs.map((startUs) => ({
+    startUs,
+    positionPercent: rangePercent(startUs, minimumUs, maximumUs),
+  }));
 }
 
 function rangePercent(value: number, minimum: number, maximum: number) {

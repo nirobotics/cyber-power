@@ -1202,6 +1202,9 @@ export function analyzeEnergyRange(
     (sum, interval) => sum + interval.durationSeconds,
     0,
   );
+  const effectiveDurationSeconds = dataset.series.enabled
+    ? enabledDurationSeconds
+    : durationSeconds;
 
   const subsystemMetrics: SubsystemRangeMetrics[] = dataset.subsystems.map((node) => {
     const energyWh = cumulativeDelta(node.energyWh, range.startUs, range.endUs).energy;
@@ -1286,6 +1289,7 @@ export function analyzeEnergyRange(
         0,
       ),
       enabledDurationSeconds,
+      effectiveDurationSeconds,
     },
     subsystems: subsystemMetrics,
     quality: { ...dataset.quality, reconciliation: rangeReconciliation },

@@ -58,6 +58,8 @@ Current and power are instantaneous sample-and-hold state. Energy is cumulative 
 - Minimum voltage: minimum optional battery series inside the range.
 - Brownout count and duration: intersections of true intervals with the range.
 - Enabled duration: intersection of Driver Station Enabled intervals with the range.
+- Effective duration: Enabled duration when Driver Station Enabled is available; otherwise
+  the complete selection duration.
 - Share: a node's energy divided by the energy of its siblings for the same parent.
 
 Use integer microseconds internally for bounds and seconds only for display or CLI options.

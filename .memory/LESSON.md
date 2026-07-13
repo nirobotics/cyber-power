@@ -1,3 +1,6 @@
+- “有效持续时间”必须用 `dataset.series.enabled` 是否存在区分“全程 Disabled”和“日志缺少 Enabled”：前者为 0，后者回退完整选区时长，不能仅依据 `enabledDurationSeconds === 0` 判断。
+- 底部 Brownout 事件标记应取每个 true interval 的 `startUs`，按完整能量日志 `min/max` 定位，并使用固定像素尺寸、`pointer-events: none` 的独立图层；不能把叉号几何放进 `preserveAspectRatio="none"` 的整轴 SVG，否则窄屏会把红叉压成竖线。
+- 多曲线 ECharts 的 Robot Mode/Brownout `markArea` 只能由一条可见曲线承载，避免透明背景按曲线数量重复叠色；全部曲线隐藏时使用 silent、tooltip-off 的空 carrier 保留状态背景。
 - Worker 取消或同 `requestId` 替换时必须先从 current controller 状态中删除或替换旧 controller，再调用 `abort()`；否则同步 abort listener 仍可能回传旧 progress/error。
 - pnpm 11 的依赖 `overrides` 应放在根 `pnpm-workspace.yaml`；安全补丁优先使用精确来源选择器，避免上游未来升级后仍被长期强制降级或锁死。
 - Vercel 的 React Router 项目必须把 Framework Preset 设为 `react-router`；设为 `Other` 时构建表面成功但只上传静态文件，所有应用路由都会是平台级 404。

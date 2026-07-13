@@ -418,7 +418,7 @@ export function createRobotTimelineOption(
     },
   };
   const selected = config[metric];
-  const areas = metric === "voltage" ? timelineAreas(dataset, theme) : [];
+  const areas = timelineAreas(dataset, theme);
   const data = metric === "energy" ? relativeEnergyPairs(selected.series) : seriesPairs(selected.series);
   const threshold = metric === "voltage"
     ? heldSeriesPairs(dataset.series.brownoutVoltageV, dataset.bounds.energyStartUs, dataset.bounds.energyEndUs)
@@ -477,6 +477,20 @@ export function createSubsystemTimelineOption(
     current: { label: "子系统电流 (A)", unit: "A", series: (node: SubsystemNode) => node.currentA },
     energy: { label: "子系统能量 (Wh)", unit: "Wh", series: (node: SubsystemNode) => node.energyWh },
   }[metric];
+  const areas = timelineAreas(dataset, theme);
+  const visibleSeries = nodes
+    .map((node, index) => ({ node, color: COLORS.subsystem[index % COLORS.subsystem.length] }))
+    .filter(({ node }) => !hiddenIds.has(node.id))
+    .map(({ node, color }, visibleIndex) => lineSeries(
+      node.id,
+      `${node.rawPath} (${config.unit})`,
+      metric === "energy" ? relativeEnergyPairs(config.series(node)) : seriesPairs(config.series(node)),
+      color,
+      0,
+      0,
+      visibleIndex === 0 ? areas : [],
+      metric !== "energy",
+    ));
 
   return {
     backgroundColor: "transparent",
@@ -491,19 +505,27 @@ export function createSubsystemTimelineOption(
     }],
     yAxis: [yAxis(config.label, COLORS.subsystem[0], 0, palette)],
     dataZoom: [controlledZoom(zoomId, [0])],
-    series: nodes
-      .map((node, index) => ({ node, color: COLORS.subsystem[index % COLORS.subsystem.length] }))
-      .filter(({ node }) => !hiddenIds.has(node.id))
-      .map(({ node, color }) => lineSeries(
-        node.id,
-        `${node.rawPath} (${config.unit})`,
-        metric === "energy" ? relativeEnergyPairs(config.series(node)) : seriesPairs(config.series(node)),
-        color,
-        0,
-        0,
-        [],
-        metric !== "energy",
-      )),
+    series: visibleSeries.length > 0 || areas.length === 0
+      ? visibleSeries
+      : [timelineAreaCarrier(`subsystem-${metric}-timeline-areas`, areas)],
+  };
+}
+
+function timelineAreaCarrier(id: string, areas: TimelineArea[]) {
+  return {
+    id,
+    name: "",
+    type: "line" as const,
+    data: [],
+    xAxisIndex: 0,
+    yAxisIndex: 0,
+    showSymbol: false,
+    animation: false,
+    silent: true,
+    tooltip: { show: false },
+    lineStyle: { opacity: 0 },
+    itemStyle: { opacity: 0 },
+    markArea: { silent: true, label: { show: false }, data: areas },
   };
 }
 

@@ -205,6 +205,7 @@ export interface RangeAnalysis {
     brownoutCount: number;
     brownoutDurationSeconds: number;
     enabledDurationSeconds: number;
+    effectiveDurationSeconds: number;
   };
   subsystems: SubsystemRangeMetrics[];
   quality: DataQuality;

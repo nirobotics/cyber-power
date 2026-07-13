@@ -230,13 +230,16 @@ describe("robot timeline cards", () => {
     expect(option.yAxis[0]).toMatchObject({ min: 3, max: 13.5 });
   });
 
-  it("keeps the mode and brownout areas on voltage only", () => {
+  it("keeps the same mode and brownout areas on every robot timeline", () => {
     const dataset = robotDataset();
-    const voltage = robotOptionView(createRobotTimelineOption(dataset, "voltage", "dark", "voltage"));
-    const current = robotOptionView(createRobotTimelineOption(dataset, "current", "dark", "current"));
 
-    expect(voltage.series[0]?.markArea?.data).toHaveLength(2);
-    expect(current.series[0]?.markArea).toBeUndefined();
+    for (const metric of ["voltage", "current", "power", "energy"] as const) {
+      const option = robotOptionView(createRobotTimelineOption(dataset, metric, "dark", metric));
+      expect(option.series[0]?.markArea?.data).toHaveLength(2);
+    }
+
+    const voltage = robotOptionView(createRobotTimelineOption(dataset, "voltage", "dark", "voltage"));
+    expect(voltage.series[1]?.markArea).toBeUndefined();
   });
 
   it("renders a separate legend and four equal-height chart cards", () => {
@@ -308,6 +311,65 @@ describe("subsystem timeline options", () => {
         `subsystem-${metric}-time-range`,
       ));
       expect(option.series).toEqual([]);
+    }
+  });
+
+  it("applies state areas once to the first visible subsystem curve", () => {
+    const first = subsystemNode();
+    const second = { ...subsystemNode(), id: "intake", rawPath: "intake", displayName: "intake" };
+    const dataset = subsystemDataset(first);
+    dataset.subsystems = [first, second];
+    addTimelineAreas(dataset);
+
+    for (const metric of ["power", "current", "energy"] as const) {
+      const option = optionView(createSubsystemTimelineOption(
+        dataset,
+        [first, second],
+        new Set(),
+        metric,
+        "dark",
+        `subsystem-${metric}-time-range`,
+      ));
+
+      expect(option.series).toHaveLength(2);
+      expect(option.series[0]?.markArea?.data).toHaveLength(2);
+      expect(option.series[1]?.markArea).toBeUndefined();
+    }
+
+    const firstHidden = optionView(createSubsystemTimelineOption(
+      dataset,
+      [first, second],
+      new Set([first.id]),
+      "power",
+      "dark",
+      "subsystem-power-time-range",
+    ));
+    expect(firstHidden.series).toHaveLength(1);
+    expect(firstHidden.series[0]?.id).toBe(second.id);
+    expect(firstHidden.series[0]?.markArea?.data).toHaveLength(2);
+  });
+
+  it("keeps state areas visible with a silent carrier when every subsystem is hidden", () => {
+    const node = subsystemNode();
+    const dataset = subsystemDataset(node);
+    addTimelineAreas(dataset);
+    for (const metric of ["power", "current", "energy"] as const) {
+      const option = optionView(createSubsystemTimelineOption(
+        dataset,
+        [node],
+        new Set([node.id]),
+        metric,
+        "dark",
+        `subsystem-${metric}-time-range`,
+      ));
+
+      expect(option.series).toHaveLength(1);
+      expect(option.series[0]).toMatchObject({
+        id: `subsystem-${metric}-timeline-areas`,
+        data: [],
+        silent: true,
+      });
+      expect(option.series[0]?.markArea?.data).toHaveLength(2);
     }
   });
 });
@@ -389,6 +451,11 @@ function robotDataset(): EnergyLogDataset {
   const dataset = subsystemDataset(subsystemNode());
   dataset.series.batteryVoltageV = numeric([12.4, 10.8], "V");
   dataset.series.brownoutVoltageV = numeric([6.3, 6.2], "V");
+  addTimelineAreas(dataset);
+  return dataset;
+}
+
+function addTimelineAreas(dataset: EnergyLogDataset) {
   dataset.segments.modes = [{
     startUs: 0,
     endUs: 1_000_000,
@@ -397,7 +464,6 @@ function robotDataset(): EnergyLogDataset {
     isPractice: false,
   }];
   dataset.segments.brownouts = [{ startUs: 400_000, endUs: 500_000, durationSeconds: 0.1 }];
-  return dataset;
 }
 
 function optionView(option: unknown) {
@@ -408,6 +474,8 @@ function optionView(option: unknown) {
       data?: Array<[number, number]>;
       step?: "end";
       emphasis?: { disabled?: boolean };
+      silent?: boolean;
+      markArea?: { data?: unknown[] };
     }>;
   };
 }
