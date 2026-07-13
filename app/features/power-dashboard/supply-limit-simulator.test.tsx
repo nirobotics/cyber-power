@@ -216,6 +216,7 @@ describe("SupplyLimitSimulator", () => {
 
     expect(markup).toContain('aria-checked="true"');
     expect(markup).toContain("请输入有效电流。");
+    expect(markup.match(/请输入有效电流。/g)).toHaveLength(1);
     expect(markup).not.toContain("限流模拟报告");
   });
 

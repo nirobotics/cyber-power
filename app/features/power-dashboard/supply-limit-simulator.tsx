@@ -349,23 +349,21 @@ export function SupplyLimitSimulator({
                               ? "顶层终端电机组"
                               : "叶节点"}
                         </span>
-                        {nodeErrors.map((message) => (
-                          <span key={message} className="mt-1 block text-[10px] text-danger">
-                            {message}
-                          </span>
-                        ))}
-                        {conflict ? (
-                          <span className="mt-1 block text-[10px] text-danger">
-                            与 {targetById.get(conflict.ancestorId)?.rawPath ?? conflict.ancestorId}
-                            {" / "}
-                            {targetById.get(conflict.descendantId)?.rawPath ?? conflict.descendantId}
-                            存在祖先与后代重复计算冲突。
-                          </span>
-                        ) : null}
                         {errorId ? (
-                          <span id={errorId} className="sr-only">
-                            {nodeErrors.join(" ")}
-                            {conflict ? " 当前目标与另一目标存在祖先和后代重复计算冲突。" : ""}
+                          <span id={errorId} className="mt-1 block text-[10px] text-danger">
+                            {nodeErrors.map((message) => (
+                              <span key={message} className="block">
+                                {message}
+                              </span>
+                            ))}
+                            {conflict ? (
+                              <span className="block">
+                                与 {targetById.get(conflict.ancestorId)?.rawPath ?? conflict.ancestorId}
+                                {" / "}
+                                {targetById.get(conflict.descendantId)?.rawPath ?? conflict.descendantId}
+                                存在祖先与后代重复计算冲突。
+                              </span>
+                            ) : null}
                           </span>
                         ) : null}
                       </td>
