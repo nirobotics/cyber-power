@@ -22,3 +22,6 @@
 - EnergyLogger 累计 Wh 的限流估算必须在每个能量样本时刻取 held Supply Current，只缩放非负增量并把下降作为 reset；不能重新积分功率。负电流或负功率样本应保持原样，电流不大于 0 但功率或能量仍增加时也不能虚报节省量。
 - 多目标限流模拟不应维护 draft/applied 两套配置：以一份 draft 为事实源，总开关关闭时完全跳过估算但保留所有启用状态、输入值和聚合确认；开启后每次有效修改只执行一次原子估算，无效配置立即隐藏旧报告，禁用行始终保留且不进入计算。
 - 配置对象与 EnergyLogger 层级一一对应时，应直接在与数据明细相同的可展开路径表中行内编辑，使用稀疏 upsert 保存已触碰行；独立“候选列表 + 已选列表”会重复层级、增加添加/删除步骤。折叠后仍要提示已启用后代，并把隐藏行错误提升到可见区域。
+- React Router 的 `typegen`、typecheck、test 与 build 都会读写 `.react-router`；同一工作区不能并发运行这些命令，否则会出现临时文件 ENOENT。bundle 报告可以在 build 完成后单独运行。
+- Vite PWA 会把 manifest 图标自动加入 Workbox 预缓存；若通用 glob 也匹配图标，必须用 `globIgnores` 排除，否则离线缓存会出现重复 URL 和无效体积。
+- WPILOG Blob/File decoder 应在大外部 chunk 内继续使用较小窗口，并只保留跨窗口残片，避免每条记录在 4 MiB 缓冲区上反复分配；常规微秒时间戳用安全整数 `number`，仅越过 `MAX_SAFE_INTEGER` 时回退 BigInt。纯 TypeScript 基准已经达到性能目标时，不应为 WASM 增加复制边界、构建链和兼容性成本。

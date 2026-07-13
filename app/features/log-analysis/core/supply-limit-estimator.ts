@@ -43,8 +43,7 @@ interface ActiveTarget {
   input: SupplyCurrentLimitInput;
   node: SubsystemNode;
   warnings: SupplyLimitWarning[];
-  observedCurrentA: Float64Array;
-  estimatedCurrentA: Float64Array;
+  removedCurrentA: number;
   estimatedPeakCurrentA: number;
   estimatedPeakCurrentTimestampUs: number;
   estimatedPeakPowerW: number;
@@ -347,12 +346,14 @@ function heapPop(heap: TimestampCursor[]): TimestampCursor | undefined {
   return first;
 }
 
-function mergedTimelineTimestamps(
+function forEachMergedTimestamp(
   series: readonly NumericSeries[],
   startUs: number,
   endUs: number,
-): Float64Array {
-  if (startUs === endUs) return Float64Array.of(startUs);
+  visit: (timestampUs: number) => void,
+): void {
+  visit(startUs);
+  if (startUs === endUs) return;
   const heap: TimestampCursor[] = [];
   for (const item of series) {
     const index = upperBound(item.timestampsUs, startUs);
@@ -365,18 +366,20 @@ function mergedTimelineTimestamps(
     }
   }
 
-  const timestampsUs: number[] = [startUs];
+  let previousTimestampUs = startUs;
   while (heap.length > 0) {
     const cursor = heapPop(heap)!;
-    if (timestampsUs.at(-1) !== cursor.timestampUs) timestampsUs.push(cursor.timestampUs);
+    if (previousTimestampUs !== cursor.timestampUs) {
+      previousTimestampUs = cursor.timestampUs;
+      visit(cursor.timestampUs);
+    }
     cursor.index += 1;
     if (cursor.index < cursor.series.length && cursor.series[cursor.index] < endUs) {
       cursor.timestampUs = cursor.series[cursor.index];
       heapPush(heap, cursor);
     }
   }
-  timestampsUs.push(endUs);
-  return Float64Array.from(timestampsUs);
+  visit(endUs);
 }
 
 function hasNegativeValue(series: NumericSeries, range: TimeRange): boolean {
@@ -443,27 +446,15 @@ export function estimateSupplyCurrentLimits(
     .map((input) => ({ ...input }))
     .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
   const activeInputs = limits.filter(isActive);
-  const timelineSeries: NumericSeries[] = [
+  const timestampSeries: NumericSeries[] = [
     dataset.series.totalCurrentA,
     dataset.series.totalPowerW,
     dataset.series.totalEnergyWh,
   ];
   for (const input of activeInputs) {
     const node = nodesById.get(input.nodeId)!;
-    timelineSeries.push(node.currentA, node.powerW, node.energyWh);
+    timestampSeries.push(node.currentA, node.powerW, node.energyWh);
   }
-  const timestampsUs = mergedTimelineTimestamps(
-    timelineSeries,
-    range.startUs,
-    range.endUs,
-  );
-  const observedTotalCurrentA = new Float64Array(timestampsUs.length);
-  const candidateEstimatedTotalCurrentA = new Float64Array(timestampsUs.length);
-  const observedTotalPowerW = new Float64Array(timestampsUs.length);
-  const candidateEstimatedTotalPowerW = new Float64Array(timestampsUs.length);
-  const observedTotalEnergyWh = new Float64Array(timestampsUs.length);
-  const candidateEstimatedTotalEnergyWh = new Float64Array(timestampsUs.length);
-
   const targets: ActiveTarget[] = activeInputs.map((input) => {
     const node = nodesById.get(input.nodeId)!;
     const targetWarnings: SupplyLimitWarning[] = [];
@@ -502,8 +493,7 @@ export function estimateSupplyCurrentLimits(
       input,
       node,
       warnings: targetWarnings,
-      observedCurrentA: new Float64Array(timestampsUs.length),
-      estimatedCurrentA: new Float64Array(timestampsUs.length),
+      removedCurrentA: 0,
       estimatedPeakCurrentA: Number.NEGATIVE_INFINITY,
       estimatedPeakCurrentTimestampUs: range.startUs,
       estimatedPeakPowerW: Number.NEGATIVE_INFINITY,
@@ -528,113 +518,102 @@ export function estimateSupplyCurrentLimits(
   let estimatedPeakCurrentTimestampUs = range.startUs;
   let estimatedPeakPowerW = Number.NEGATIVE_INFINITY;
   let estimatedPeakPowerTimestampUs = range.startUs;
-
-  for (let index = 0; index < timestampsUs.length; index += 1) {
-    const timestampUs = timestampsUs[index];
-    const totalCurrentA = advanceHeldNumericCursor(totalCurrentCursor, timestampUs);
-    const totalPowerW = advanceHeldNumericCursor(totalPowerCursor, timestampUs);
-    observedTotalCurrentA[index] = totalCurrentA;
-    observedTotalPowerW[index] = totalPowerW;
-
-    let removedCurrentA = 0;
-    let removedPowerW = 0;
-    for (const target of targets) {
-      const currentA = advanceHeldNumericCursor(target.currentCursor, timestampUs);
-      const powerW = advanceHeldNumericCursor(target.powerCursor, timestampUs);
-      const scale = currentScale(currentA, target.input.limitA);
-      const estimatedCurrentA = currentA > 0
-        ? Math.min(currentA, target.input.limitA)
-        : currentA;
-      const estimatedPowerW = powerW < 0 ? powerW : powerW * scale;
-      target.observedCurrentA[index] = currentA;
-      target.estimatedCurrentA[index] = estimatedCurrentA;
-      removedCurrentA += currentA - estimatedCurrentA;
-      removedPowerW += powerW - estimatedPowerW;
-      if (currentA <= 0 && powerW > 0) target.positivePowerWithoutCurrent = true;
-      if (estimatedCurrentA > target.estimatedPeakCurrentA) {
-        target.estimatedPeakCurrentA = estimatedCurrentA;
-        target.estimatedPeakCurrentTimestampUs = timestampUs;
-      }
-      if (estimatedPowerW > target.estimatedPeakPowerW) {
-        target.estimatedPeakPowerW = estimatedPowerW;
-        target.estimatedPeakPowerTimestampUs = timestampUs;
-      }
-      advanceEnergyCursor(target.energyCursor, timestampUs);
-    }
-    advanceEnergyCursor(totalEnergyCursor, timestampUs);
-
-    const rawEstimatedCurrentA = totalCurrentA - removedCurrentA;
-    const rawEstimatedPowerW = totalPowerW - removedPowerW;
-    const currentTolerance = Math.max(
-      CURRENT_TOLERANCE_A,
-      Math.abs(totalCurrentA) * 1e-9,
-    );
-    const powerTolerance = Math.max(POWER_TOLERANCE_W, Math.abs(totalPowerW) * 1e-9);
-    const normalizedCurrentA = normalizedNonnegative(rawEstimatedCurrentA, currentTolerance);
-    const normalizedPowerW = normalizedNonnegative(rawEstimatedPowerW, powerTolerance);
-    if (normalizedCurrentA === undefined) {
-      robotEstimateAvailable = false;
-      unavailableReasons.add("current");
-    }
-    if (normalizedPowerW === undefined) {
-      robotEstimateAvailable = false;
-      unavailableReasons.add("power");
-    }
-    candidateEstimatedTotalCurrentA[index] = normalizedCurrentA ?? rawEstimatedCurrentA;
-    candidateEstimatedTotalPowerW[index] = normalizedPowerW ?? rawEstimatedPowerW;
-    if (candidateEstimatedTotalCurrentA[index] > estimatedPeakCurrentA) {
-      estimatedPeakCurrentA = candidateEstimatedTotalCurrentA[index];
-      estimatedPeakCurrentTimestampUs = timestampUs;
-    }
-    if (candidateEstimatedTotalPowerW[index] > estimatedPeakPowerW) {
-      estimatedPeakPowerW = candidateEstimatedTotalPowerW[index];
-      estimatedPeakPowerTimestampUs = timestampUs;
-    }
-
-    const savedEnergyWh = targets.reduce(
-      (sum, target) =>
-        sum + target.energyCursor.baselineWh - target.energyCursor.estimatedWh,
-      0,
-    );
-    const rawEstimatedEnergyWh = totalEnergyCursor.baselineWh - savedEnergyWh;
-    const energyTolerance = Math.max(
-      ENERGY_TOLERANCE_WH,
-      Math.abs(totalEnergyCursor.baselineWh) * 1e-9,
-    );
-    const normalizedEnergyWh = normalizedNonnegative(rawEstimatedEnergyWh, energyTolerance);
-    if (normalizedEnergyWh === undefined) {
-      robotEstimateAvailable = false;
-      unavailableReasons.add("energy");
-    }
-    observedTotalEnergyWh[index] = totalEnergyCursor.baselineWh;
-    candidateEstimatedTotalEnergyWh[index] = normalizedEnergyWh ?? rawEstimatedEnergyWh;
-  }
-
   let clippedUnionDurationSeconds = 0;
-  for (let index = 0; index < timestampsUs.length - 1; index += 1) {
-    const durationSeconds = (timestampsUs[index + 1] - timestampsUs[index]) / 1_000_000;
-    let anyTargetClipped = false;
-    for (const target of targets) {
-      const removedCurrentA =
-        target.observedCurrentA[index] - target.estimatedCurrentA[index];
-      if (removedCurrentA > CURRENT_TOLERANCE_A) {
-        anyTargetClipped = true;
-        target.triggered = true;
-        target.clippedDurationSeconds += durationSeconds;
-        target.ampSecondsRemoved += removedCurrentA * durationSeconds;
+  let previousTimestampUs: number | undefined;
+
+  forEachMergedTimestamp(
+    timestampSeries,
+    range.startUs,
+    range.endUs,
+    (timestampUs) => {
+      if (previousTimestampUs !== undefined) {
+        const durationSeconds = (timestampUs - previousTimestampUs) / 1_000_000;
+        let anyTargetClipped = false;
+        for (const target of targets) {
+          if (target.removedCurrentA <= CURRENT_TOLERANCE_A) continue;
+          anyTargetClipped = true;
+          target.clippedDurationSeconds += durationSeconds;
+          target.ampSecondsRemoved += target.removedCurrentA * durationSeconds;
+        }
+        if (anyTargetClipped) clippedUnionDurationSeconds += durationSeconds;
       }
-    }
-    if (anyTargetClipped) clippedUnionDurationSeconds += durationSeconds;
-  }
-  const finalIndex = timestampsUs.length - 1;
-  for (const target of targets) {
-    if (
-      target.observedCurrentA[finalIndex] - target.estimatedCurrentA[finalIndex] >
-      CURRENT_TOLERANCE_A
-    ) {
-      target.triggered = true;
-    }
-  }
+
+      const totalCurrentA = advanceHeldNumericCursor(totalCurrentCursor, timestampUs);
+      const totalPowerW = advanceHeldNumericCursor(totalPowerCursor, timestampUs);
+
+      let removedCurrentA = 0;
+      let removedPowerW = 0;
+      for (const target of targets) {
+        const currentA = advanceHeldNumericCursor(target.currentCursor, timestampUs);
+        const powerW = advanceHeldNumericCursor(target.powerCursor, timestampUs);
+        const scale = currentScale(currentA, target.input.limitA);
+        const estimatedCurrentA = currentA > 0
+          ? Math.min(currentA, target.input.limitA)
+          : currentA;
+        const estimatedPowerW = powerW < 0 ? powerW : powerW * scale;
+        target.removedCurrentA = currentA - estimatedCurrentA;
+        removedCurrentA += target.removedCurrentA;
+        removedPowerW += powerW - estimatedPowerW;
+        if (target.removedCurrentA > CURRENT_TOLERANCE_A) target.triggered = true;
+        if (currentA <= 0 && powerW > 0) target.positivePowerWithoutCurrent = true;
+        if (estimatedCurrentA > target.estimatedPeakCurrentA) {
+          target.estimatedPeakCurrentA = estimatedCurrentA;
+          target.estimatedPeakCurrentTimestampUs = timestampUs;
+        }
+        if (estimatedPowerW > target.estimatedPeakPowerW) {
+          target.estimatedPeakPowerW = estimatedPowerW;
+          target.estimatedPeakPowerTimestampUs = timestampUs;
+        }
+        advanceEnergyCursor(target.energyCursor, timestampUs);
+      }
+      advanceEnergyCursor(totalEnergyCursor, timestampUs);
+
+      const rawEstimatedCurrentA = totalCurrentA - removedCurrentA;
+      const rawEstimatedPowerW = totalPowerW - removedPowerW;
+      const currentTolerance = Math.max(
+        CURRENT_TOLERANCE_A,
+        Math.abs(totalCurrentA) * 1e-9,
+      );
+      const powerTolerance = Math.max(POWER_TOLERANCE_W, Math.abs(totalPowerW) * 1e-9);
+      const normalizedCurrentA = normalizedNonnegative(rawEstimatedCurrentA, currentTolerance);
+      const normalizedPowerW = normalizedNonnegative(rawEstimatedPowerW, powerTolerance);
+      if (normalizedCurrentA === undefined) {
+        robotEstimateAvailable = false;
+        unavailableReasons.add("current");
+      }
+      if (normalizedPowerW === undefined) {
+        robotEstimateAvailable = false;
+        unavailableReasons.add("power");
+      }
+      const estimatedTotalCurrentA = normalizedCurrentA ?? rawEstimatedCurrentA;
+      const estimatedTotalPowerW = normalizedPowerW ?? rawEstimatedPowerW;
+      if (estimatedTotalCurrentA > estimatedPeakCurrentA) {
+        estimatedPeakCurrentA = estimatedTotalCurrentA;
+        estimatedPeakCurrentTimestampUs = timestampUs;
+      }
+      if (estimatedTotalPowerW > estimatedPeakPowerW) {
+        estimatedPeakPowerW = estimatedTotalPowerW;
+        estimatedPeakPowerTimestampUs = timestampUs;
+      }
+
+      const savedEnergyWh = targets.reduce(
+        (sum, target) =>
+          sum + target.energyCursor.baselineWh - target.energyCursor.estimatedWh,
+        0,
+      );
+      const rawEstimatedEnergyWh = totalEnergyCursor.baselineWh - savedEnergyWh;
+      const energyTolerance = Math.max(
+        ENERGY_TOLERANCE_WH,
+        Math.abs(totalEnergyCursor.baselineWh) * 1e-9,
+      );
+      const normalizedEnergyWh = normalizedNonnegative(rawEstimatedEnergyWh, energyTolerance);
+      if (normalizedEnergyWh === undefined) {
+        robotEstimateAvailable = false;
+        unavailableReasons.add("energy");
+      }
+      previousTimestampUs = timestampUs;
+    },
+  );
 
   const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
   const enabledDurationSeconds = enabledIntervals.reduce(
@@ -847,26 +826,6 @@ export function estimateSupplyCurrentLimits(
         0,
       ),
       robotEstimateAvailable,
-    },
-    timeline: {
-      timestampsUs,
-      observedTotalCurrentA,
-      estimatedTotalCurrentA: robotEstimateAvailable
-        ? candidateEstimatedTotalCurrentA
-        : undefined,
-      observedTotalPowerW,
-      estimatedTotalPowerW: robotEstimateAvailable
-        ? candidateEstimatedTotalPowerW
-        : undefined,
-      observedTotalEnergyWh,
-      estimatedTotalEnergyWh: robotEstimateAvailable
-        ? candidateEstimatedTotalEnergyWh
-        : undefined,
-      targets: targets.map((target) => ({
-        nodeId: target.node.id,
-        observedCurrentA: target.observedCurrentA,
-        estimatedCurrentA: target.estimatedCurrentA,
-      })),
     },
     warnings: globalWarnings,
   };

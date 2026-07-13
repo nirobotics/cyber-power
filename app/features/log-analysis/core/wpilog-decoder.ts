@@ -13,6 +13,7 @@ import type {
 
 const MAGIC = new Uint8Array([0x57, 0x50, 0x49, 0x4c, 0x4f, 0x47]);
 const VERSION_1_0 = 0x0100;
+const DECODE_WINDOW_SIZE = 64 * 1024;
 const EMPTY_BYTES = new Uint8Array(0);
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -36,6 +37,7 @@ interface RecordHeader {
   payloadLength: number;
   timestampUs: number;
   headerLength: number;
+  entry?: WpiLogEntry;
 }
 
 class PayloadCursor {
@@ -109,15 +111,26 @@ class WpiLogStreamDecoder {
     if (this.finished) throw new Error("Cannot push bytes after finishing the decoder");
     if (chunk.byteLength === 0) return;
 
-    if (this.buffer.byteLength === 0) {
-      this.buffer = chunk;
-    } else {
-      const joined = new Uint8Array(this.buffer.byteLength + chunk.byteLength);
-      joined.set(this.buffer);
-      joined.set(chunk, this.buffer.byteLength);
-      this.buffer = joined;
+    let chunkOffset = 0;
+    while (chunkOffset < chunk.byteLength) {
+      const remainingLength = chunk.byteLength - chunkOffset;
+      const windowLength = this.buffer.byteLength >= DECODE_WINDOW_SIZE
+        ? remainingLength
+        : Math.min(DECODE_WINDOW_SIZE, remainingLength);
+      const window = windowLength === chunk.byteLength
+        ? chunk
+        : chunk.subarray(chunkOffset, chunkOffset + windowLength);
+      if (this.buffer.byteLength === 0) {
+        this.buffer = window;
+      } else {
+        const joined = new Uint8Array(this.buffer.byteLength + window.byteLength);
+        joined.set(this.buffer);
+        joined.set(window, this.buffer.byteLength);
+        this.buffer = joined;
+      }
+      chunkOffset += windowLength;
+      this.processAvailable();
     }
-    this.processAvailable();
   }
 
   finish(sizeBytes?: number): WpiLogListing {
@@ -272,54 +285,69 @@ class WpiLogStreamDecoder {
     );
     fieldOffset += payloadLengthBytes;
     const timestampUs = readTimestamp(this.buffer, fieldOffset, timestampLength, recordOffset);
-    const header = { entryId, payloadLength, timestampUs, headerLength };
-    this.validateDeclaredDataLength(header, recordOffset);
+    const entry = this.validateDeclaredDataLength(entryId, payloadLength, recordOffset);
+    const header = { entryId, payloadLength, timestampUs, headerLength, entry };
     return header;
   }
 
-  private validateDeclaredDataLength(header: RecordHeader, offset: number): void {
-    if (header.entryId === 0) return;
-    const entry = this.activeEntries.get(header.entryId);
+  private validateDeclaredDataLength(
+    entryId: number,
+    payloadLength: number,
+    offset: number,
+  ): WpiLogEntry | undefined {
+    if (entryId === 0) return undefined;
+    const entry = this.activeEntries.get(entryId);
     if (!entry) {
       throw new LogAnalysisError(
         fatalIssue(
           "CORRUPT_RECORD_MIDDLE",
-          `Data record references inactive entry ID ${header.entryId}`,
-          { offset, details: { entryId: header.entryId } },
+          `Data record references inactive entry ID ${entryId}`,
+          { offset, details: { entryId } },
         ),
       );
     }
-    const fixedLengths: Record<string, number> = {
-      boolean: 1,
-      int64: 8,
-      float: 4,
-      double: 8,
-    };
-    const expected = fixedLengths[entry.type];
-    if (expected !== undefined && header.payloadLength !== expected) {
+    let expected: number | undefined;
+    switch (entry.type) {
+      case "boolean":
+        expected = 1;
+        break;
+      case "float":
+        expected = 4;
+        break;
+      case "int64":
+      case "double":
+        expected = 8;
+        break;
+    }
+    if (expected !== undefined && payloadLength !== expected) {
       throw new LogAnalysisError(
         fatalIssue(
           "CORRUPT_RECORD_MIDDLE",
-          `${entry.type} entry ${entry.name} declares a ${header.payloadLength}-byte payload; expected ${expected}`,
-          { offset, entryName: entry.name, details: { expected, actual: header.payloadLength } },
+          `${entry.type} entry ${entry.name} declares a ${payloadLength}-byte payload; expected ${expected}`,
+          { offset, entryName: entry.name, details: { expected, actual: payloadLength } },
         ),
       );
     }
-    const arrayElementLengths: Record<string, number> = {
-      "int64[]": 8,
-      "float[]": 4,
-      "double[]": 8,
-    };
-    const elementLength = arrayElementLengths[entry.type];
-    if (elementLength !== undefined && header.payloadLength % elementLength !== 0) {
+    let elementLength: number | undefined;
+    switch (entry.type) {
+      case "float[]":
+        elementLength = 4;
+        break;
+      case "int64[]":
+      case "double[]":
+        elementLength = 8;
+        break;
+    }
+    if (elementLength !== undefined && payloadLength % elementLength !== 0) {
       throw new LogAnalysisError(
         fatalIssue(
           "CORRUPT_RECORD_MIDDLE",
           `${entry.type} entry ${entry.name} payload is not aligned to ${elementLength}-byte elements`,
-          { offset, entryName: entry.name, details: { payloadLength: header.payloadLength } },
+          { offset, entryName: entry.name, details: { payloadLength } },
         ),
       );
     }
+    return entry;
   }
 
   private handleRecord(header: RecordHeader, payload: Uint8Array, offset: number): void {
@@ -329,7 +357,7 @@ class WpiLogStreamDecoder {
       return;
     }
 
-    const entry = this.activeEntries.get(header.entryId);
+    const entry = header.entry;
     if (!entry) {
       throw new LogAnalysisError(
         fatalIssue(
@@ -467,11 +495,21 @@ function readUnsignedLittleEndianNumber(
   offset: number,
   length: number,
 ): number {
-  let value = 0;
-  for (let index = length - 1; index >= 0; index -= 1) {
-    value = value * 256 + bytes[offset + index];
+  switch (length) {
+    case 1:
+      return bytes[offset];
+    case 2:
+      return bytes[offset] + bytes[offset + 1] * 0x100;
+    case 3:
+      return bytes[offset] + bytes[offset + 1] * 0x100 + bytes[offset + 2] * 0x10000;
+    case 4:
+      return bytes[offset]
+        + bytes[offset + 1] * 0x100
+        + bytes[offset + 2] * 0x10000
+        + bytes[offset + 3] * 0x1000000;
+    default:
+      throw new RangeError(`Unsupported unsigned integer length ${length}`);
   }
-  return value;
 }
 
 function readTimestamp(
@@ -480,20 +518,25 @@ function readTimestamp(
   length: number,
   recordOffset: number,
 ): number {
-  let value = 0n;
+  if (length <= 4) return readUnsignedLittleEndianNumber(bytes, offset, length);
+
+  let value = 0;
   for (let index = length - 1; index >= 0; index -= 1) {
-    value = value * 256n + BigInt(bytes[offset + index]);
+    value = value * 256 + bytes[offset + index];
   }
-  if (value > BigInt(Number.MAX_SAFE_INTEGER)) {
-    throw new LogAnalysisError(
-      fatalIssue(
-        "CORRUPT_RECORD_MIDDLE",
-        "WPILOG timestamp exceeds JavaScript's exact integer range",
-        { offset: recordOffset, details: { timestamp: value.toString() } },
-      ),
-    );
+  if (Number.isSafeInteger(value)) return value;
+
+  let exactValue = 0n;
+  for (let index = length - 1; index >= 0; index -= 1) {
+    exactValue = exactValue * 256n + BigInt(bytes[offset + index]);
   }
-  return Number(value);
+  throw new LogAnalysisError(
+    fatalIssue(
+      "CORRUPT_RECORD_MIDDLE",
+      "WPILOG timestamp exceeds JavaScript's exact integer range",
+      { offset: recordOffset, details: { timestamp: exactValue.toString() } },
+    ),
+  );
 }
 
 export async function decodeWpiLog(

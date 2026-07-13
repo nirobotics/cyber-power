@@ -4,7 +4,6 @@ import {
   type AnalysisResult,
 } from "../core";
 import {
-  toParseOptions,
   type LogAnalysisWorkerRequest,
   type LogAnalysisWorkerResponse,
 } from "./protocol";
@@ -16,40 +15,30 @@ export interface LogAnalysisWorkerHandlerOptions {
   post: (response: LogAnalysisWorkerResponse, transfer?: Transferable[]) => void;
 }
 
-export function collectTransferables(result: AnalysisResult): Transferable[] {
+function collectTransferables(result: AnalysisResult): Transferable[] {
   const buffers = new Set<ArrayBuffer>();
-  const addNumeric = (series: { timestampsUs: Float64Array; values: Float64Array } | undefined) => {
-    if (!series) return;
-    buffers.add(series.timestampsUs.buffer as ArrayBuffer);
-    buffers.add(series.values.buffer as ArrayBuffer);
-  };
-  const addBoolean = (series: { timestampsUs: Float64Array; values: Uint8Array } | undefined) => {
-    if (!series) return;
-    buffers.add(series.timestampsUs.buffer as ArrayBuffer);
-    buffers.add(series.values.buffer as ArrayBuffer);
-  };
-  const addInteger = (
-    series: { timestampsUs: Float64Array; values: BigInt64Array } | undefined,
+  const addSeries = (
+    series: { timestampsUs: Float64Array; values: ArrayBufferView } | undefined,
   ) => {
     if (!series) return;
     buffers.add(series.timestampsUs.buffer as ArrayBuffer);
     buffers.add(series.values.buffer as ArrayBuffer);
   };
   const { dataset } = result;
-  addNumeric(dataset.series.totalCurrentA);
-  addNumeric(dataset.series.totalPowerW);
-  addNumeric(dataset.series.totalEnergyWh);
-  addNumeric(dataset.series.batteryVoltageV);
-  addNumeric(dataset.series.brownoutVoltageV);
-  addBoolean(dataset.series.brownedOut);
-  addBoolean(dataset.series.enabled);
-  addBoolean(dataset.series.autonomous);
-  addBoolean(dataset.series.test);
-  addInteger(dataset.series.matchType);
+  addSeries(dataset.series.totalCurrentA);
+  addSeries(dataset.series.totalPowerW);
+  addSeries(dataset.series.totalEnergyWh);
+  addSeries(dataset.series.batteryVoltageV);
+  addSeries(dataset.series.brownoutVoltageV);
+  addSeries(dataset.series.brownedOut);
+  addSeries(dataset.series.enabled);
+  addSeries(dataset.series.autonomous);
+  addSeries(dataset.series.test);
+  addSeries(dataset.series.matchType);
   for (const subsystem of dataset.subsystems) {
-    addNumeric(subsystem.currentA);
-    addNumeric(subsystem.powerW);
-    addNumeric(subsystem.energyWh);
+    addSeries(subsystem.currentA);
+    addSeries(subsystem.powerW);
+    addSeries(subsystem.energyWh);
   }
   return [...buffers];
 }
@@ -72,10 +61,14 @@ export function createLogAnalysisWorkerHandler({
     try {
       const result = await analyze(
         request.file,
-        toParseOptions(request.options, controller.signal, (processedBytes, totalBytes) => {
-          if (!isCurrent()) return;
-          post({ type: "progress", requestId: request.requestId, processedBytes, totalBytes });
-        }),
+        {
+          ...request.options,
+          signal: controller.signal,
+          onProgress: (processedBytes, totalBytes) => {
+            if (!isCurrent()) return;
+            post({ type: "progress", requestId: request.requestId, processedBytes, totalBytes });
+          },
+        },
       );
       if (!isCurrent()) return;
       post({ type: "result", requestId: request.requestId, result }, collectTransferables(result));

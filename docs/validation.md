@@ -29,7 +29,7 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 | 能量范围 | 37.375794–555.366124 s |
 | 时长 | 517.990330 s |
 | 总能量 | 85.15297648087035 Wh |
-| 平均功率 | 591.807795584009 W |
+| 平均功率（Enabled-only） | 1359.1164895298145 W |
 | 峰值功率 | 4262.547700747947 W |
 | 峰值电流 | 509.314775390625 A |
 | 最低电压 | 5.68804833984375 V |
@@ -86,17 +86,41 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 - 整机结果保留未选中负载的残差；明显负的整机扣减结果不得强制钳制为 0，而应保留逐目标结果并将整机估算标记为不可用；
 - 源数据的 reset、时间断层、非有限样本、负值、子序列缺失和对账差异会映射为显式估算提示；源 typed arrays 不得被修改。
 
-2026-07-13 使用三份真实日志完成双目标回放；每份均有 26 个可选节点，目标峰值未超过输入上限，输入顺序反转后指标与时间序列逐点一致，高于历史峰值的上限产生严格零变化：
+2026-07-14 在 Node 22.23.1 / pnpm 11.5.0 下使用三份真实日志完成双目标回放；每份均有 26 个可选节点，目标峰值未超过输入上限，输入顺序反转后报告字段逐项一致，高于历史峰值的上限产生严格零变化。估算器只流式生成报告，不再分配或返回未消费的模拟时间轴：
 
 | 日志 | 代表性双目标 | 节省能量 | 估算耗时 |
 | --- | --- | ---: | ---: |
-| `akit_26-07-12_15-41-02.wpilog` | 顶层终端 `indexer` + `swerve/drive/moduleBR` | 1.628806 Wh | 23.6 ms |
-| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | 已确认聚合 `indexer` + `shooter/flywheel` | 0.426392 Wh | 11.4 ms |
-| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | 已确认聚合 `indexer` + `shooter/flywheel` | 0.803912 Wh | 12.6 ms |
+| `akit_26-07-12_15-41-02.wpilog` | `indexer=50A` + `swerve/drive/moduleBR=50A` | 4.401447 Wh | 12.237 ms |
+| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | `indexer=50A` + 已确认 `shooter/flywheel=50A` | 4.456180 Wh | 7.511 ms |
+| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | `indexer=50A` + 已确认 `shooter/flywheel=50A` | 4.908331 Wh | 10.233 ms |
 
 三份日志的整机估算均可用；两份旧日志中的 `swerve/` 尾随斜杠均正确规范化。日志仅从原下载位置读取，未复制或提交到仓库。
 
 这些回归只验证历史反事实模型，不把模拟报告当作真实限流后的硬件测量。电池电压、Brownout、机构动作和 Stator Current 均不在预测范围内。
+
+## 性能与体积门禁
+
+2026-07-14 的正式基线使用 Node 22.23.1 / pnpm 11.5.0。WPILOG decoder 在隔离临时 worktree 中交替执行优化前后版本，各 7 次测量；记录数、可信 byte、issues、区间、能量、峰值、Brownout 与 Enabled-only 平均功率均保持一致：
+
+| 日志 | 优化前中位数 | 优化后中位数 | 改进 |
+| --- | ---: | ---: | ---: |
+| 金标 59.62 MiB | 746.777 ms | 521.891 ms | 30.1% |
+| hopper e6 36.63 MiB | 480.690 ms | 329.760 ms | 31.4% |
+| hopper e4 43.81 MiB | 544.869 ms | 372.657 ms | 31.6% |
+
+绝对值受同进程加载两份模块影响，只用作严格 A/B；相对改进决定是否合入。纯 TypeScript 已超过门槛，本轮不引入 WASM。
+
+生产 build 后运行 `pnpm bundle:check`，当前结果：
+
+| 门禁 | 当前值 | 上限 |
+| --- | ---: | ---: |
+| Client assets raw | 1,050,594 B | 1,310,720 B |
+| 上传页初始依赖 gzip | 117,364 B | 122,880 B |
+| ECharts chunk gzip | 184,890 B | 204,800 B |
+| Public resources raw | 63,322 B | 122,880 B |
+| PWA precache Brotli | 353,050 B | 512,000 B |
+
+预缓存重复 URL 与缺失 URL 均为 0。该门禁只依赖构建产物，可在 CI 中运行，不需要提交私有 WPILOG。
 
 ## 自动测试范围
 
@@ -110,3 +134,4 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 - 多目标 Supply Current 实时模拟、sample-and-hold 缩放、累计能量 reset、Enabled-only 平均功率、整机残差保留，以及“模拟”页报告与总开关；
 - 模拟功能不渲染专用图表且不接入整机/子系统图表，关闭总开关后配置保留、报告隐藏；
 - React Router 生产 build、PWA manifest/service worker 与客户端 secret 扫描。
+- bundle 初始依赖、ECharts、公共资源和 PWA 预缓存体积预算，以及重复/缺失预缓存 URL。

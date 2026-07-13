@@ -25,7 +25,7 @@ Expected full-range values:
 | Energy range | 37.375794–555.366124 s |
 | Duration | 517.990330 s |
 | Total energy | 85.15297648087035 Wh |
-| Average power | 591.807795584009 W |
+| Average power (Enabled-only) | 1359.1164895298145 W |
 | Peak power | 4262.547700747947 W |
 | Peak current | 509.314775390625 A |
 | Minimum EnergyLogger voltage | 5.68804833984375 V |

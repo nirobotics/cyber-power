@@ -186,6 +186,7 @@ describe("multi-target Supply current limit estimator", () => {
       limits: [{ nodeId: "indexer", limitA: 50 }],
     });
 
+    expect(result).not.toHaveProperty("timeline");
     expect(result.targets).toHaveLength(1);
     expect(result.targets[0]).toMatchObject({
       nodeId: "indexer",
@@ -198,11 +199,9 @@ describe("multi-target Supply current limit estimator", () => {
     expect(result.targets[0].baseline.energyWh).toBe(6);
     expect(result.targets[0].estimated.energyWh).toBe(4.75);
     expect(result.targets[0].estimated.peakCurrentA).toBe(50);
+    expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_000_000);
     expect(result.targets[0].estimated.peakCurrentA).toBeLessThanOrEqual(50);
     expect(result.targets[0].estimated.averagePowerW).toBeCloseTo(4_200);
-    expect(Array.from(result.timeline.targets[0].estimatedCurrentA)).toEqual([
-      10, 50, 40, 50, 20,
-    ]);
   });
 
   it("applies several independent targets atomically and is invariant to input order", () => {
@@ -226,12 +225,11 @@ describe("multi-target Supply current limit estimator", () => {
     expect(forward.totals.energySavedWh).toBeCloseTo(1.25 + 4 / 9);
     expect(forward.totals.estimated?.energyWh).toBeCloseTo(15 - 1.25 - 4 / 9);
     expect(forward.totals.estimated?.peakCurrentA).toBe(100);
+    expect(forward.totals.estimated?.peakCurrentTimestampUs).toBe(2_000_000);
     expect(forward.totals.estimated?.peakPowerW).toBe(1_200);
+    expect(forward.totals.estimated?.peakPowerTimestampUs).toBe(2_000_000);
     expect(forward.totals.clippedUnionDurationSeconds).toBe(3);
     expect(forward.totals.clippedDurationSumSeconds).toBe(3);
-    expect(Array.from(forward.timeline.estimatedTotalCurrentA ?? [])).toEqual([
-      40, 90, 100, 80, 50,
-    ]);
   });
 
   it("is unchanged above the observed peak and saves monotonically as the limit falls", () => {
@@ -248,9 +246,6 @@ describe("multi-target Supply current limit estimator", () => {
 
     expect(high.targets[0].estimated).toEqual(high.targets[0].baseline);
     expect(high.targets[0].energySavedWh).toBe(0);
-    expect(high.timeline.targets[0].estimatedCurrentA).toEqual(
-      high.timeline.targets[0].observedCurrentA,
-    );
     expect(zero.targets[0].estimated.energyWh).toBe(0);
     expect(zero.targets[0].estimated.peakCurrentA).toBe(0);
     expect(high.totals.energySavedWh).toBeLessThan(medium.totals.energySavedWh);
@@ -295,15 +290,13 @@ describe("multi-target Supply current limit estimator", () => {
       range: { startUs: 1_500_000, endUs: 3_500_000 },
     });
 
-    expect(Array.from(result.timeline.timestampsUs)).toEqual([
-      1_500_000, 2_000_000, 3_000_000, 3_500_000,
-    ]);
-    expect(Array.from(result.timeline.targets[0].observedCurrentA)).toEqual([100, 40, 80, 80]);
-    expect(Array.from(result.timeline.targets[0].estimatedCurrentA)).toEqual([50, 40, 50, 50]);
     expect(result.targets[0].baseline.energyWh).toBe(4);
     expect(result.targets[0].estimated.energyWh).toBe(3.25);
     expect(result.targets[0].baseline.peakCurrentTimestampUs).toBe(1_500_000);
     expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_500_000);
+    expect(result.targets[0].estimated.peakCurrentA).toBe(50);
+    expect(result.targets[0].clippedDurationSeconds).toBe(1);
+    expect(result.targets[0].ampSecondsRemoved).toBe(40);
   });
 
   it("rounds requested bounds to integer microseconds and includes an exact end sample", () => {
@@ -313,11 +306,12 @@ describe("multi-target Supply current limit estimator", () => {
     });
 
     expect(result.range).toMatchObject({ startUs: 1_500_000, endUs: 3_000_000 });
-    expect(result.timeline.timestampsUs.at(-1)).toBe(3_000_000);
-    expect(result.timeline.targets[0].observedCurrentA.at(-1)).toBe(80);
-    expect(result.timeline.targets[0].estimatedCurrentA.at(-1)).toBe(50);
     expect(result.targets[0].baseline.energyWh).toBe(4);
     expect(result.targets[0].estimated.energyWh).toBe(3.25);
+    expect(result.targets[0].estimated.peakCurrentA).toBe(50);
+    expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_500_000);
+    expect(result.targets[0].clippedDurationSeconds).toBe(0.5);
+    expect(result.targets[0].ampSecondsRemoved).toBe(25);
   });
 
   it("returns an unchanged baseline when every configured target is disabled", () => {
@@ -328,11 +322,6 @@ describe("multi-target Supply current limit estimator", () => {
     expect(result.targets).toEqual([]);
     expect(result.totals.activeTargetCount).toBe(0);
     expect(result.totals.estimated).toEqual(result.totals.baseline);
-    expect(result.timeline.estimatedTotalCurrentA).toEqual(
-      result.timeline.observedTotalCurrentA,
-    );
-    expect(result.timeline.estimatedTotalPowerW).toEqual(result.timeline.observedTotalPowerW);
-    expect(result.timeline.estimatedTotalEnergyWh).toEqual(result.timeline.observedTotalEnergyWh);
     expect(result.warnings.some((item) => item.code === "NO_ACTIVE_LIMITS")).toBe(true);
   });
 
@@ -421,8 +410,9 @@ describe("multi-target Supply current limit estimator", () => {
       limits: [{ nodeId: "indexer", limitA: 50 }],
     });
 
-    expect([...result.timeline.estimatedTotalPowerW!]).toEqual([100, 100, 100, 100, 100]);
     expect(result.targets[0].estimated.peakPowerW).toBe(-100);
+    expect(result.totals.estimated?.peakPowerW).toBe(100);
+    expect(result.totals.estimated?.peakPowerTimestampUs).toBe(0);
     expect(result.targets[0].warnings.some((item) => item.code === "SOURCE_NEGATIVE_VALUE"))
       .toBe(true);
   });
@@ -438,9 +428,6 @@ describe("multi-target Supply current limit estimator", () => {
 
     expect(result.totals.robotEstimateAvailable).toBe(false);
     expect(result.totals.estimated).toBeUndefined();
-    expect(result.timeline.estimatedTotalCurrentA).toBeUndefined();
-    expect(result.timeline.estimatedTotalPowerW).toBeUndefined();
-    expect(result.timeline.estimatedTotalEnergyWh).toBeUndefined();
     expect(result.warnings.some((item) => item.code === "ROBOT_ESTIMATE_UNAVAILABLE"))
       .toBe(true);
   });

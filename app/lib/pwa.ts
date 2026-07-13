@@ -1,5 +1,4 @@
 export const OFFLINE_NAVIGATION_CACHE = "cyber-power-navigation-v1";
-export const PWA_STATUS_EVENT = "cyber-power-pwa-status";
 
 export async function hasOfflineShell() {
   if (typeof globalThis.caches === "undefined") return false;
