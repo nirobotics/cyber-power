@@ -55,6 +55,9 @@ describe("live supply limit simulation", () => {
     expect(dashboardSource).not.toContain("AppliedSupplyLimitScenario");
     expect(dashboardSource).not.toContain("applySupplyLimitScenario");
     expect(dashboardSource).not.toContain("revertSupplyLimitDrafts");
+    expect(dashboardSource).toContain("upsertSupplyLimitDraft(current, nodeId, patch)");
+    expect(dashboardSource).not.toContain("onAddTarget=");
+    expect(dashboardSource).not.toContain("onRemoveTarget=");
   });
 
   it("keeps the shared time range available on the simulation page", () => {

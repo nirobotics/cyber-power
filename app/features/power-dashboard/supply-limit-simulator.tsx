@@ -1,13 +1,14 @@
 import {
   AlertTriangle,
-  Check,
+  ChevronDown,
+  ChevronRight,
   CircleHelp,
-  Plus,
   Trash2,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { SupplyLimitEstimate } from "../log-analysis/core";
 import { formatDuration, formatNumber } from "./format";
+import { buildHierarchyTableRows } from "./hierarchy-table";
 
 export interface SupplyLimitTargetOption {
   id: string;
@@ -16,7 +17,10 @@ export interface SupplyLimitTargetOption {
   depth: number;
   childrenIds: readonly string[];
   peakCurrentA: number;
+  peakPowerW: number;
+  averagePowerW: number;
   energyWh: number;
+  share: number | null;
   unavailableReason?: string;
 }
 
@@ -44,9 +48,7 @@ export interface SupplyLimitSimulatorProps {
   estimate: SupplyLimitEstimate | null;
   simulationEnabled: boolean;
   onSimulationEnabledChange: (enabled: boolean) => void;
-  onAddTarget: (nodeId: string) => void;
   onUpdateDraft: (nodeId: string, patch: SupplyLimitDraftPatch) => void;
-  onRemoveTarget: (nodeId: string) => void;
   onClear: () => void;
 }
 
@@ -55,34 +57,35 @@ export interface SupplyLimitHierarchyConflict {
   descendantId: string;
 }
 
-export function orderSupplyLimitTargets(
-  targets: readonly SupplyLimitTargetOption[],
-): SupplyLimitTargetOption[] {
-  const targetById = new Map(targets.map((target) => [target.id, target]));
-  const childrenByParentId = new Map<string | null, SupplyLimitTargetOption[]>();
-  for (const target of targets) {
-    const parentId = target.parentId !== null && targetById.has(target.parentId)
-      ? target.parentId
-      : null;
-    const children = childrenByParentId.get(parentId) ?? [];
-    children.push(target);
-    childrenByParentId.set(parentId, children);
-  }
-  for (const children of childrenByParentId.values()) {
-    children.sort((left, right) => left.rawPath.localeCompare(right.rawPath));
-  }
+export interface SupplyLimitTableRow {
+  target: SupplyLimitTargetOption;
+  visualDepth: number;
+  hasChildren: boolean;
+}
 
-  const ordered: SupplyLimitTargetOption[] = [];
-  const visited = new Set<string>();
-  const visit = (target: SupplyLimitTargetOption) => {
-    if (visited.has(target.id)) return;
-    visited.add(target.id);
-    ordered.push(target);
-    for (const child of childrenByParentId.get(target.id) ?? []) visit(child);
-  };
-  for (const root of childrenByParentId.get(null) ?? []) visit(root);
-  for (const target of targets) visit(target);
-  return ordered;
+function compareSupplyLimitTargets(
+  left: SupplyLimitTargetOption,
+  right: SupplyLimitTargetOption,
+) {
+  const energyDifference = right.energyWh - left.energyWh;
+  if (energyDifference !== 0) return energyDifference;
+  const pathDifference = left.rawPath.localeCompare(right.rawPath);
+  return pathDifference !== 0 ? pathDifference : left.id.localeCompare(right.id);
+}
+
+export function buildSupplyLimitTableRows(
+  targets: readonly SupplyLimitTargetOption[],
+  expandedIds: ReadonlySet<string> = new Set(),
+): SupplyLimitTableRow[] {
+  return buildHierarchyTableRows(
+    targets,
+    expandedIds,
+    compareSupplyLimitTargets,
+  ).map(({ item, visualDepth, hasChildren }) => ({
+    target: item,
+    visualDepth,
+    hasChildren,
+  }));
 }
 
 export function parseSupplyLimitDraftValue(value: string): number | null {
@@ -128,23 +131,21 @@ export function SupplyLimitSimulator({
   estimate,
   simulationEnabled,
   onSimulationEnabledChange,
-  onAddTarget,
   onUpdateDraft,
-  onRemoveTarget,
   onClear,
 }: SupplyLimitSimulatorProps) {
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(() => new Set());
   const targetById = useMemo(
     () => new Map(targets.map((target) => [target.id, target])),
     [targets],
   );
-  const draftIds = useMemo(
-    () => new Set(draftLimits.map((limit) => limit.nodeId)),
+  const draftById = useMemo(
+    () => new Map(draftLimits.map((limit) => [limit.nodeId, limit])),
     [draftLimits],
   );
-  const orderedTargets = useMemo(() => orderSupplyLimitTargets(targets), [targets]);
-  const availableTargets = useMemo(
-    () => orderedTargets.filter((target) => !draftIds.has(target.id)),
-    [draftIds, orderedTargets],
+  const rows = useMemo(
+    () => buildSupplyLimitTableRows(targets, expandedIds),
+    [expandedIds, targets],
   );
   const hierarchyConflicts = useMemo(
     () => findSupplyLimitHierarchyConflicts(targets, draftLimits),
@@ -187,6 +188,53 @@ export function SupplyLimitSimulator({
     errors.length > 0 || hierarchyConflicts.length > 0 || hasInvalidDraft;
   const enabledDraftCount = draftLimits.filter((limit) => limit.enabled).length;
   const canEnableSimulation = enabledDraftCount > 0 && !hasErrors;
+  const hiddenDraftErrorMessages = useMemo(() => {
+    const visibleIds = new Set(rows.map(({ target }) => target.id));
+    const messages = new Set<string>();
+
+    for (const draft of draftLimits) {
+      if (!draft.enabled || visibleIds.has(draft.nodeId)) continue;
+      const target = targetById.get(draft.nodeId);
+      const path = target?.rawPath ?? draft.nodeId;
+      const nodeErrors = errorsByNodeId.get(draft.nodeId) ?? [];
+      for (const message of nodeErrors) messages.add(`「${path}」${message}`);
+      if (nodeErrors.length > 0) continue;
+      if (!target) {
+        messages.add(`「${path}」不在当前日志的 EnergyLogger 层级中。`);
+      } else if (target.unavailableReason) {
+        messages.add(`「${path}」${target.unavailableReason}`);
+      } else if (parseSupplyLimitDraftValue(draft.limitText) === null) {
+        messages.add(`「${path}」请输入大于或等于 0 的有限电流值。`);
+      } else if (target.childrenIds.length > 0 && !draft.aggregateConfirmed) {
+        messages.add(`「${path}」需要确认该聚合路径代表同构电机组。`);
+      }
+    }
+
+    return [...messages];
+  }, [draftLimits, errorsByNodeId, rows, targetById]);
+  const enabledDescendantCountById = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const draft of draftLimits) {
+      if (!draft.enabled) continue;
+      const visited = new Set<string>([draft.nodeId]);
+      let parentId = targetById.get(draft.nodeId)?.parentId ?? null;
+      while (parentId !== null && !visited.has(parentId)) {
+        counts.set(parentId, (counts.get(parentId) ?? 0) + 1);
+        visited.add(parentId);
+        parentId = targetById.get(parentId)?.parentId ?? null;
+      }
+    }
+    return counts;
+  }, [draftLimits, targetById]);
+
+  const toggleExpanded = (id: string) => {
+    setExpandedIds((current) => {
+      const next = new Set(current);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div className="grid gap-2.5">
@@ -236,223 +284,224 @@ export function SupplyLimitSimulator({
           </div>
         </div>
 
-        <div className="border-b border-line px-4 py-3">
-          <ul
-            className="grid max-h-56 overflow-y-auto rounded-md border border-line bg-surface sm:grid-cols-2 xl:grid-cols-3"
-            aria-label="可添加的限流目标"
-          >
-            {availableTargets.length === 0 ? (
-              <li className="px-3 py-4 text-center text-xs text-ink-faint sm:col-span-2 xl:col-span-3">
-                所有可用节点均已加入模拟。
-              </li>
-            ) : (
-              availableTargets.map((target) => {
-                  const aggregate = target.childrenIds.length > 0;
-                  return (
-                    <li
-                      key={target.id}
-                      className="border-b border-line/70 sm:border-r sm:[&:nth-child(2n)]:border-r-0 xl:[&:nth-child(2n)]:border-r xl:[&:nth-child(3n)]:border-r-0"
+        <div
+          className="overflow-x-auto"
+          role="region"
+          aria-label="限流模拟路径表"
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[1220px] text-left text-xs">
+            <thead className="bg-surface-2 text-[10px] uppercase tracking-wider text-ink-faint">
+              <tr>
+                <th className="px-4 py-2.5 font-semibold">路径</th>
+                <th className="px-3 py-2.5 text-right font-semibold">能量</th>
+                <th className="px-3 py-2.5 text-right font-semibold">同级占比</th>
+                <th className="px-3 py-2.5 text-right font-semibold">平均功率</th>
+                <th className="px-3 py-2.5 text-right font-semibold">峰值功率</th>
+                <th className="px-3 py-2.5 text-right font-semibold">峰值电流</th>
+                <th className="w-60 px-3 py-2.5 font-semibold">Supply 限流值</th>
+                <th className="w-20 px-4 py-2.5 text-center font-semibold">启用</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line">
+              {rows.map(({ target, visualDepth, hasChildren }, rowIndex) => {
+                const draft = draftById.get(target.id) ?? {
+                  nodeId: target.id,
+                  enabled: false,
+                  limitText: "",
+                  aggregateConfirmed: false,
+                };
+                const aggregate = target.childrenIds.length > 0;
+                const nodeErrors = errorsByNodeId.get(target.id) ?? [];
+                const conflict = conflictByNodeId.get(target.id);
+                const parsedLimit = parseSupplyLimitDraftValue(draft.limitText);
+                const aggregateConfirmationMissing =
+                  draft.enabled && aggregate && !draft.aggregateConfirmed;
+                const inputInvalid =
+                  draft.enabled &&
+                  (nodeErrors.length > 0 ||
+                    Boolean(conflict) ||
+                    parsedLimit === null ||
+                    aggregateConfirmationMissing ||
+                    Boolean(target.unavailableReason));
+                const expanded = expandedIds.has(target.id);
+                const statusId = `supply-limit-status-${rowIndex}`;
+                const unavailableId = target.unavailableReason
+                  ? `supply-limit-unavailable-${rowIndex}`
+                  : undefined;
+                const describedBy = [
+                  draft.enabled ? statusId : undefined,
+                  unavailableId,
+                ].filter(Boolean).join(" ") || undefined;
+                const enabledDescendantCount =
+                  enabledDescendantCountById.get(target.id) ?? 0;
+                return (
+                  <tr
+                    key={target.id}
+                    className={[
+                      "hover:bg-surface-2/70",
+                      conflict ? "bg-danger/5" : "",
+                    ].join(" ")}
+                  >
+                    <td
+                      className="max-w-[360px] px-4 py-2.5 align-top font-mono text-ink"
+                      title={target.rawPath}
                     >
-                      <button
-                        type="button"
-                        className="flex w-full items-center gap-2 px-3 py-2 text-left outline-none transition hover:bg-surface-2 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-brand/50 aria-disabled:cursor-not-allowed aria-disabled:opacity-50"
-                        onClick={() => {
-                          if (!target.unavailableReason) onAddTarget(target.id);
-                        }}
-                        aria-disabled={Boolean(target.unavailableReason)}
-                        title={target.unavailableReason}
+                      <div
+                        className="flex min-w-0 items-center gap-1"
+                        style={{ paddingLeft: `${visualDepth * 16}px` }}
                       >
-                        <Plus className="size-3.5 shrink-0 text-brand" aria-hidden />
-                        <span
-                          className="min-w-0 flex-1 truncate font-mono text-xs text-ink"
-                          title={target.rawPath}
-                          style={{ paddingLeft: `${Math.min(target.depth, 6) * 10}px` }}
-                        >
-                          {target.rawPath}
-                        </span>
-                        <span
-                          className="max-w-40 shrink-0 truncate text-[10px] text-ink-faint"
-                          title={target.unavailableReason}
-                        >
-                          {target.unavailableReason
-                            ? target.unavailableReason
-                            : aggregate
-                              ? "聚合节点 · 需确认"
-                              : target.parentId === null
-                                ? "顶层终端组"
-                                : "叶节点"}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })
-            )}
-          </ul>
-        </div>
-
-        {draftLimits.length > 0 ? (
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[980px] text-left text-xs">
-              <thead className="bg-surface-2 text-[10px] uppercase tracking-wider text-ink-faint">
-                <tr>
-                  <th className="w-16 px-4 py-2.5 text-center font-semibold">启用</th>
-                  <th className="px-3 py-2.5 font-semibold">EnergyLogger 路径</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">范围峰值</th>
-                  <th className="px-3 py-2.5 text-right font-semibold">范围能量</th>
-                  <th className="w-48 px-3 py-2.5 font-semibold">总 Supply 上限</th>
-                  <th className="w-48 px-3 py-2.5 font-semibold">节点确认</th>
-                  <th className="w-40 px-3 py-2.5 font-semibold">状态</th>
-                  <th className="w-16 px-4 py-2.5 text-center font-semibold">移除</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-line">
-                {draftLimits.map((draft, rowIndex) => {
-                  const target = targetById.get(draft.nodeId);
-                  const aggregate = (target?.childrenIds.length ?? 0) > 0;
-                  const nodeErrors = errorsByNodeId.get(draft.nodeId) ?? [];
-                  const conflict = conflictByNodeId.get(draft.nodeId);
-                  const parsedLimit = parseSupplyLimitDraftValue(draft.limitText);
-                  const inputInvalid =
-                    nodeErrors.length > 0 ||
-                    (draft.enabled && parsedLimit === null) ||
-                    Boolean(target?.unavailableReason);
-                  const statusId = `supply-limit-status-${rowIndex}`;
-                  const errorId = nodeErrors.length > 0 || conflict
-                    ? `supply-limit-errors-${rowIndex}`
-                    : undefined;
-                  return (
-                    <tr key={draft.nodeId} className="hover:bg-surface-2/60">
-                      <td className="px-4 py-3 text-center align-top">
-                        <input
-                          type="checkbox"
-                          checked={draft.enabled}
-                          onChange={(event) =>
-                            onUpdateDraft(draft.nodeId, {
-                              enabled: event.currentTarget.checked,
-                            })
-                          }
-                          className="size-4 accent-[rgb(var(--brand))]"
-                          aria-label={`${draft.enabled ? "禁用" : "启用"}${target?.rawPath ?? draft.nodeId}限流目标`}
-                        />
-                      </td>
-                      <td className="max-w-[340px] px-3 py-3 align-top">
-                        <span
-                          className="block max-w-full truncate font-mono text-ink"
-                          title={target?.rawPath ?? draft.nodeId}
-                        >
-                          {target?.rawPath ?? draft.nodeId}
-                        </span>
-                        <span className="mt-1 block text-[10px] text-ink-faint">
-                          {aggregate
-                            ? "聚合节点"
-                            : target?.parentId === null
-                              ? "顶层终端电机组"
-                              : "叶节点"}
-                        </span>
-                        {errorId ? (
-                          <span id={errorId} className="mt-1 block text-[10px] text-danger">
-                            {nodeErrors.map((message) => (
-                              <span key={message} className="block">
-                                {message}
-                              </span>
-                            ))}
-                            {conflict ? (
-                              <span className="block">
-                                与 {targetById.get(conflict.ancestorId)?.rawPath ?? conflict.ancestorId}
-                                {" / "}
-                                {targetById.get(conflict.descendantId)?.rawPath ?? conflict.descendantId}
-                                存在祖先与后代重复计算冲突。
-                              </span>
-                            ) : null}
+                        {hasChildren ? (
+                          <button
+                            type="button"
+                            className="grid size-6 shrink-0 place-items-center rounded text-ink-dim outline-none transition hover:bg-bg hover:text-ink focus-visible:ring-2 focus-visible:ring-brand/50"
+                            onClick={() => toggleExpanded(target.id)}
+                            aria-expanded={expanded}
+                            aria-label={`${expanded ? "收起" : "展开"}${target.rawPath}的下级子系统`}
+                            title={expanded ? "收起下级子系统" : "展开下级子系统"}
+                          >
+                            {expanded ? (
+                              <ChevronDown className="size-3.5" aria-hidden />
+                            ) : (
+                              <ChevronRight className="size-3.5" aria-hidden />
+                            )}
+                          </button>
+                        ) : (
+                          <span className="size-6 shrink-0" aria-hidden="true" />
+                        )}
+                        <span className="min-w-0 truncate">{target.rawPath}</span>
+                        {!expanded && enabledDescendantCount > 0 ? (
+                          <span className="shrink-0 rounded-full bg-brand/10 px-1.5 py-0.5 font-sans text-[9px] text-brand">
+                            下级已启用 {enabledDescendantCount}
                           </span>
                         ) : null}
-                      </td>
-                      <td className="px-3 py-3 text-right align-top font-mono text-ink-dim">
-                        {formatNumber(target?.peakCurrentA, 1)} A
-                      </td>
-                      <td className="px-3 py-3 text-right align-top font-mono text-ink-dim">
-                        {formatNumber(target?.energyWh, 3)} Wh
-                      </td>
-                      <td className="px-3 py-2 align-top">
-                        <label className="sr-only" htmlFor={`supply-limit-${draft.nodeId}`}>
-                          {target?.rawPath ?? draft.nodeId} 总 Supply 电流上限
-                        </label>
-                        <div className="relative">
+                      </div>
+                      {target.unavailableReason ? (
+                        <span
+                          id={unavailableId}
+                          className="mt-1 block pl-7 font-sans text-[10px] text-warn"
+                        >
+                          {target.unavailableReason}
+                        </span>
+                      ) : null}
+                    </td>
+                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink">
+                      {formatNumber(target.energyWh, 4)} Wh
+                    </td>
+                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                      {formatNumber(
+                        target.share === null ? undefined : target.share * 100,
+                        2,
+                      )}%
+                    </td>
+                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                      {formatNumber(target.averagePowerW, 1)} W
+                    </td>
+                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                      {formatNumber(target.peakPowerW, 1)} W
+                    </td>
+                    <td className="px-3 py-2.5 text-right align-top font-mono text-ink-dim">
+                      {formatNumber(target.peakCurrentA, 1)} A
+                    </td>
+                    <td className="px-3 py-2 align-top">
+                      <label className="sr-only" htmlFor={`supply-limit-${target.id}`}>
+                        {target.rawPath} Supply 限流值（安培）
+                      </label>
+                      <div className="relative">
+                        <input
+                          id={`supply-limit-${target.id}`}
+                          type="text"
+                          inputMode="decimal"
+                          value={draft.limitText}
+                          onChange={(event) =>
+                            onUpdateDraft(target.id, {
+                              limitText: event.currentTarget.value,
+                            })
+                          }
+                          className="input py-1.5 pr-8"
+                          aria-invalid={inputInvalid || undefined}
+                          aria-describedby={describedBy}
+                          disabled={Boolean(target.unavailableReason)}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-xs text-ink-faint">
+                          A
+                        </span>
+                      </div>
+                      {aggregate ? (
+                        <label className="mt-1.5 flex items-start gap-2 text-[10px] leading-4 text-ink-dim">
                           <input
-                            id={`supply-limit-${draft.nodeId}`}
-                            type="text"
-                            inputMode="decimal"
-                            value={draft.limitText}
+                            type="checkbox"
+                            checked={draft.aggregateConfirmed}
                             onChange={(event) =>
-                              onUpdateDraft(draft.nodeId, {
-                                limitText: event.currentTarget.value,
+                              onUpdateDraft(target.id, {
+                                aggregateConfirmed: event.currentTarget.checked,
                               })
                             }
-                            className="input py-1.5 pr-8"
-                            aria-invalid={inputInvalid || undefined}
-                            aria-describedby={[statusId, errorId].filter(Boolean).join(" ")}
-                            disabled={!draft.enabled}
+                            className="mt-px size-3.5 shrink-0 accent-[rgb(var(--brand))]"
+                            disabled={Boolean(target.unavailableReason)}
+                            aria-describedby={unavailableId}
                           />
-                          <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 font-mono text-xs text-ink-faint">
-                            A
-                          </span>
-                        </div>
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        {aggregate ? (
-                          <label className="flex items-start gap-2 text-[11px] leading-4 text-ink-dim">
-                            <input
-                              type="checkbox"
-                              checked={draft.aggregateConfirmed}
-                              onChange={(event) =>
-                                onUpdateDraft(draft.nodeId, {
-                                  aggregateConfirmed: event.currentTarget.checked,
-                                })
-                              }
-                              className="mt-0.5 size-4 shrink-0 accent-[rgb(var(--brand))]"
-                              disabled={!draft.enabled}
+                          确认同构电机组
+                        </label>
+                      ) : null}
+                      {draft.enabled ? (
+                        <span id={statusId} className="mt-1 block" aria-live="polite">
+                          {conflict ? (
+                            <span className="text-[10px] text-danger">
+                              与另一个已启用的上级或下级路径冲突
+                            </span>
+                          ) : nodeErrors.length > 0 ? (
+                            <span className="text-[10px] text-danger">
+                              {nodeErrors[0]}
+                            </span>
+                          ) : (
+                            <LimitStatus
+                              draft={draft}
+                              peakCurrentA={target.peakCurrentA}
+                              hasError={Boolean(target.unavailableReason)}
+                              aggregateConfirmationMissing={aggregateConfirmationMissing}
+                              parsedLimit={parsedLimit}
+                              simulationEnabled={simulationEnabled && estimate !== null}
                             />
-                            确认该聚合路径代表同构电机组
-                          </label>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-[11px] text-ok">
-                            <Check className="size-3.5" aria-hidden />
-                            可直接估算
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-3 py-3 align-top">
-                        <span id={statusId}>
-                          <LimitStatus
-                            draft={draft}
-                            peakCurrentA={target?.peakCurrentA}
-                            hasError={inputInvalid || Boolean(conflict)}
-                            aggregateConfirmationMissing={aggregate && !draft.aggregateConfirmed}
-                            parsedLimit={parsedLimit}
-                            simulationEnabled={simulationEnabled && estimate !== null}
-                          />
+                          )}
                         </span>
-                      </td>
-                      <td className="px-4 py-2.5 text-center align-top">
-                        <button
-                          type="button"
-                          className="grid size-8 place-items-center rounded-md text-ink-faint outline-none transition hover:bg-danger/10 hover:text-danger focus-visible:ring-2 focus-visible:ring-danger/40"
-                          onClick={() => onRemoveTarget(draft.nodeId)}
-                          aria-label={`移除${target?.rawPath ?? draft.nodeId}限流目标`}
-                          title="移除目标"
-                        >
-                          <Trash2 className="size-4" aria-hidden />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
+                      ) : null}
+                    </td>
+                    <td className="px-4 py-2.5 text-center align-top">
+                      <button
+                        type="button"
+                        role="switch"
+                        aria-checked={draft.enabled}
+                        aria-label={`${draft.enabled ? "停用" : "启用"}${target.rawPath}限流`}
+                        aria-describedby={describedBy}
+                        disabled={Boolean(target.unavailableReason)}
+                        onClick={() =>
+                          onUpdateDraft(target.id, { enabled: !draft.enabled })
+                        }
+                        className={[
+                          "relative inline-flex h-7 w-12 rounded-full outline-none transition focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
+                          draft.enabled ? "bg-brand" : "bg-line-strong",
+                        ].join(" ")}
+                      >
+                        <span
+                          className={[
+                            "absolute top-1 size-5 rounded-full bg-white shadow-sm transition-transform",
+                            draft.enabled ? "translate-x-6" : "translate-x-1",
+                          ].join(" ")}
+                          aria-hidden
+                        />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
 
-        {hierarchyConflicts.length > 0 || globalErrors.length > 0 ? (
+        {hierarchyConflicts.length > 0 ||
+        globalErrors.length > 0 ||
+        hiddenDraftErrorMessages.length > 0 ? (
           <div className="border-t border-danger/40 bg-danger/5 px-4 py-3 text-xs text-danger" role="alert">
             <div className="flex items-start gap-2">
               <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
@@ -465,6 +514,9 @@ export function SupplyLimitSimulator({
                 ))}
                 {globalErrors.map((error) => (
                   <p key={error.message}>{error.message}</p>
+                ))}
+                {hiddenDraftErrorMessages.map((message) => (
+                  <p key={message}>{message}</p>
                 ))}
               </div>
             </div>

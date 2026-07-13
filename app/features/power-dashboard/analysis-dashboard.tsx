@@ -19,6 +19,7 @@ import {
   buildSupplyLimitTargetOptions,
   supplyLimitDraftsToInputs,
   supplyLimitIssuesToDisplay,
+  upsertSupplyLimitDraft,
 } from "./supply-limit-state";
 import {
   SupplyLimitSimulator,
@@ -259,24 +260,9 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     });
   }, []);
 
-  const addSupplyLimitTarget = useCallback((nodeId: string) => {
-    setDraftSupplyLimits((current) => current.some((draft) => draft.nodeId === nodeId)
-      ? current
-      : [...current, {
-          nodeId,
-          enabled: true,
-          limitText: "",
-          aggregateConfirmed: false,
-        }]);
-  }, []);
-
   const updateSupplyLimitDraft = useCallback((nodeId: string, patch: SupplyLimitDraftPatch) => {
-    setDraftSupplyLimits((current) => current.map((draft) =>
-      draft.nodeId === nodeId ? { ...draft, ...patch } : draft));
-  }, []);
-
-  const removeSupplyLimitTarget = useCallback((nodeId: string) => {
-    setDraftSupplyLimits((current) => current.filter((draft) => draft.nodeId !== nodeId));
+    setDraftSupplyLimits((current) =>
+      upsertSupplyLimitDraft(current, nodeId, patch));
   }, []);
 
   const clearSupplyLimitScenario = useCallback(() => {
@@ -374,9 +360,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               estimate={supplyEstimateState.estimate}
               simulationEnabled={supplySimulationEnabled}
               onSimulationEnabledChange={setSupplySimulationEnabled}
-              onAddTarget={addSupplyLimitTarget}
               onUpdateDraft={updateSupplyLimitDraft}
-              onRemoveTarget={removeSupplyLimitTarget}
               onClear={clearSupplyLimitScenario}
             />
           </div>

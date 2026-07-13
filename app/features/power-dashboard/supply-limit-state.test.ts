@@ -3,9 +3,38 @@ import type { SupplyLimitDraft } from "./supply-limit-simulator";
 import {
   supplyLimitDraftsToInputs,
   supplyLimitIssuesToDisplay,
+  upsertSupplyLimitDraft,
 } from "./supply-limit-state";
 
 describe("supply limit dashboard state", () => {
+  it("creates and updates a sparse row draft without losing parked values", () => {
+    const created = upsertSupplyLimitDraft([], "indexer", { limitText: "80" });
+    expect(created).toEqual([{
+      nodeId: "indexer",
+      enabled: false,
+      limitText: "80",
+      aggregateConfirmed: false,
+    }]);
+
+    const enabled = upsertSupplyLimitDraft(created, "indexer", {
+      enabled: true,
+      aggregateConfirmed: true,
+    });
+    expect(enabled).toEqual([{
+      nodeId: "indexer",
+      enabled: true,
+      limitText: "80",
+      aggregateConfirmed: true,
+    }]);
+
+    expect(upsertSupplyLimitDraft(enabled, "indexer", { enabled: false })).toEqual([{
+      nodeId: "indexer",
+      enabled: false,
+      limitText: "80",
+      aggregateConfirmed: true,
+    }]);
+  });
+
   it("converts every enabled draft into one atomic multi-target input", () => {
     const drafts: SupplyLimitDraft[] = [
       { nodeId: "indexer", enabled: true, limitText: "120", aggregateConfirmed: false },

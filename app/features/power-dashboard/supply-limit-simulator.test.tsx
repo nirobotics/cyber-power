@@ -3,8 +3,8 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import type { SupplyLimitEstimate } from "../log-analysis/core";
 import {
+  buildSupplyLimitTableRows,
   findSupplyLimitHierarchyConflicts,
-  orderSupplyLimitTargets,
   parseSupplyLimitDraftValue,
   SupplyLimitSimulator,
   type SupplyLimitDraft,
@@ -20,7 +20,10 @@ const targets: SupplyLimitTargetOption[] = [
     depth: 0,
     childrenIds: ["swerve/moduleFL"],
     peakCurrentA: 180,
+    peakPowerW: 2_000,
+    averagePowerW: 500,
     energyWh: 40,
+    share: 0.8,
   },
   {
     id: "swerve/moduleFL",
@@ -29,7 +32,10 @@ const targets: SupplyLimitTargetOption[] = [
     depth: 1,
     childrenIds: [],
     peakCurrentA: 60,
+    peakPowerW: 700,
+    averagePowerW: 120,
     energyWh: 10,
+    share: 0.25,
   },
   {
     id: "indexer",
@@ -38,15 +44,16 @@ const targets: SupplyLimitTargetOption[] = [
     depth: 0,
     childrenIds: [],
     peakCurrentA: 120,
+    peakPowerW: 1_200,
+    averagePowerW: 200,
     energyWh: 8,
+    share: 0.2,
   },
 ];
 
 const callbacks = {
   onSimulationEnabledChange: () => undefined,
-  onAddTarget: () => undefined,
   onUpdateDraft: () => undefined,
-  onRemoveTarget: () => undefined,
   onClear: () => undefined,
 };
 
@@ -62,12 +69,25 @@ function renderSimulator(overrides: Partial<SupplyLimitSimulatorProps> = {}) {
   }));
 }
 
-describe("orderSupplyLimitTargets", () => {
-  it("places children immediately after their parent instead of grouping by depth", () => {
-    expect(orderSupplyLimitTargets(targets).map((target) => target.id)).toEqual([
-      "indexer",
+describe("buildSupplyLimitTableRows", () => {
+  it("matches the subsystem table hierarchy, energy order, and default collapse", () => {
+    expect(buildSupplyLimitTableRows(targets).map(({ target }) => target.id)).toEqual([
       "swerve",
-      "swerve/moduleFL",
+      "indexer",
+    ]);
+
+    expect(
+      buildSupplyLimitTableRows(targets, new Set(["swerve"])).map(
+        ({ target, visualDepth, hasChildren }) => ({
+          id: target.id,
+          visualDepth,
+          hasChildren,
+        }),
+      ),
+    ).toEqual([
+      { id: "swerve", visualDepth: 0, hasChildren: true },
+      { id: "swerve/moduleFL", visualDepth: 1, hasChildren: false },
+      { id: "indexer", visualDepth: 0, hasChildren: false },
     ]);
   });
 });
@@ -123,8 +143,15 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).toContain('role="switch"');
     expect(markup).toContain('aria-checked="false"');
     expect(markup).toContain('aria-label="清空限流模拟"');
+    expect(markup).toContain('aria-label="限流模拟路径表"');
+    expect(markup).toContain('tabindex="0"');
     expect(markup).toContain('aria-describedby="supply-limit-help-content"');
     expect(markup).toContain('role="tooltip"');
+    expect(markup).toMatch(
+      /路径[\s\S]*能量[\s\S]*同级占比[\s\S]*平均功率[\s\S]*峰值功率[\s\S]*峰值电流[\s\S]*Supply 限流值[\s\S]*启用/,
+    );
+    expect(markup).toContain('id="supply-limit-indexer"');
+    expect(markup).not.toContain('id="supply-limit-swerve/moduleFL"');
     expect(markup).toContain("合计 Supply Current 上限");
     expect(markup).toContain("Stator Current");
     expect(markup).not.toContain("多子系统 Supply 电流限流方案");
@@ -135,6 +162,8 @@ describe("SupplyLimitSimulator", () => {
     expect(markup).not.toContain("撤销未应用修改");
     expect(markup).not.toContain("应用方案");
     expect(markup).not.toContain("清空方案");
+    expect(markup).not.toContain("可添加的限流目标");
+    expect(markup).not.toContain("移除目标");
   });
 
   it("shows every available target without the old twelve-item search limit", () => {
@@ -145,7 +174,10 @@ describe("SupplyLimitSimulator", () => {
       depth: 0,
       childrenIds: [],
       peakCurrentA: index + 1,
+      peakPowerW: index + 1,
+      averagePowerW: index + 1,
       energyWh: index + 1,
+      share: null,
     }));
 
     const markup = renderSimulator({ targets: manyTargets });
@@ -161,13 +193,11 @@ describe("SupplyLimitSimulator", () => {
       limitText: "80",
       aggregateConfirmed: false,
     }];
-    const markup = renderSimulator({ draftLimits });
+    const markup = renderSimulator({ targets: [targets[2]], draftLimits });
 
-    expect(markup).toContain("顶层终端电机组");
-    expect(markup).toContain("可直接估算");
     expect(markup).toContain('value="80"');
     expect(markup).toContain("预计会触发");
-    expect(markup).not.toContain("确认该聚合路径代表同构电机组");
+    expect(markup).not.toContain("确认同构电机组");
   });
 
   it("shows aggregate confirmation and blocks the master switch on parent-child conflicts", () => {
@@ -177,11 +207,30 @@ describe("SupplyLimitSimulator", () => {
     ];
     const markup = renderSimulator({ draftLimits });
 
-    expect(markup).toContain("确认该聚合路径代表同构电机组");
-    expect(markup).toContain("需要修正");
+    expect(markup).toContain("确认同构电机组");
+    expect(markup).toContain("下级已启用 1");
     expect(markup).toContain("不能同时模拟");
-    expect(markup).toContain("存在祖先与后代重复计算冲突");
+    expect(markup).toContain("swerve/moduleFL");
     expect(markup).toMatch(/role="switch"[^>]*disabled=""/);
+  });
+
+  it("keeps a folded enabled descendant error visible below the table", () => {
+    const markup = renderSimulator({
+      draftLimits: [{
+        nodeId: "swerve/moduleFL",
+        enabled: true,
+        limitText: "invalid",
+        aggregateConfirmed: false,
+      }],
+      errors: [{
+        nodeId: "swerve/moduleFL",
+        message: "请输入大于或等于 0 的有限电流值。",
+      }],
+    });
+
+    expect(markup).not.toContain('id="supply-limit-swerve/moduleFL"');
+    expect(markup).toContain("下级已启用 1");
+    expect(markup).toContain("「swerve/moduleFL」请输入大于或等于 0 的有限电流值。");
   });
 
   it("keeps disabled row values while the master simulation is off", () => {
@@ -197,8 +246,21 @@ describe("SupplyLimitSimulator", () => {
     });
 
     expect(markup).toContain('value="40"');
-    expect(markup).toContain("未启用");
+    expect(markup).toMatch(/id="supply-limit-indexer"[^>]*value="40"[^>]*>/);
+    expect(markup).not.toMatch(/id="supply-limit-indexer"[^>]*disabled=""/);
     expect(markup).not.toContain("限流模拟报告");
+  });
+
+  it("keeps unavailable nodes visible but disables their row controls", () => {
+    const unavailable = {
+      ...targets[2],
+      unavailableReason: "该节点没有有效的 Supply 电流样本。",
+    };
+    const markup = renderSimulator({ targets: [unavailable] });
+
+    expect(markup).toContain("该节点没有有效的 Supply 电流样本。");
+    expect(markup).toMatch(/id="supply-limit-indexer"[^>]*disabled=""/);
+    expect(markup).toMatch(/aria-label="启用indexer限流"[^>]*disabled=""/);
   });
 
   it("shows current validation errors without rendering a stale report", () => {

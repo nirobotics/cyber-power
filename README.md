@@ -12,7 +12,7 @@ Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG
 
 兼容性只取决于 WPILOG 1.0 与 NI EnergyLogger 数据契约，不限制队伍、赛季、ProjectName 或子系统命名。
 
-独立的“模拟”页支持为多个互不重叠的 EnergyLogger 节点输入合计 Supply Current 上限；总开关开启后基于当前共享时间范围实时生成耗电量与峰值变化报告。模拟不会修改整机或子系统原图表，也不控制机器人，不预测 Stator Current、电池电压、Brownout 或机构动作结果。
+独立的“模拟”页按子系统明细相同的可展开 EnergyLogger 层级表展示路径，并在每行右侧直接填写合计 Supply Current 上限、独立启用一个或多个互不重叠节点；总开关开启后基于当前共享时间范围实时生成耗电量与峰值变化报告。模拟不会修改整机或子系统原图表，也不控制机器人，不预测 Stator Current、电池电压、Brownout 或机构动作结果。
 
 ## 目录
 

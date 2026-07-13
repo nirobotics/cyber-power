@@ -8,6 +8,7 @@ import {
   parseSupplyLimitDraftValue,
   type SupplyLimitDisplayError,
   type SupplyLimitDraft,
+  type SupplyLimitDraftPatch,
   type SupplyLimitTargetOption,
 } from "./supply-limit-simulator";
 
@@ -27,10 +28,37 @@ export function buildSupplyLimitTargetOptions(
       depth: node.depth,
       childrenIds: node.childrenIds,
       peakCurrentA: metric?.peakCurrentA ?? 0,
+      peakPowerW: metric?.peakPowerW ?? 0,
+      averagePowerW: metric?.averagePowerW ?? 0,
       energyWh: metric?.energyWh ?? 0,
+      share: metric?.share ?? null,
       ...(unavailableReason ? { unavailableReason } : {}),
     };
   });
+}
+
+export function upsertSupplyLimitDraft(
+  drafts: readonly SupplyLimitDraft[],
+  nodeId: string,
+  patch: SupplyLimitDraftPatch,
+): SupplyLimitDraft[] {
+  const existingIndex = drafts.findIndex((draft) => draft.nodeId === nodeId);
+  if (existingIndex === -1) {
+    return [
+      ...drafts,
+      {
+        nodeId,
+        enabled: false,
+        limitText: "",
+        aggregateConfirmed: false,
+        ...patch,
+      },
+    ];
+  }
+
+  return drafts.map((draft, index) =>
+    index === existingIndex ? { ...draft, ...patch } : draft,
+  );
 }
 
 export function supplyLimitDraftsToInputs(drafts: readonly SupplyLimitDraft[]): {
