@@ -45,7 +45,7 @@ describe("generic EnergyLogger analysis", () => {
     });
     expect(
       result.dataset.quality.issues.filter((issue) => issue.code === "OPTIONAL_SERIES_MISSING"),
-    ).toHaveLength(6);
+    ).toHaveLength(7);
   });
 
   it("accepts a legacy aggregate path with one trailing slash", async () => {
@@ -226,9 +226,8 @@ describe("generic EnergyLogger analysis", () => {
       .boolean(entries.autonomous, 1_000_000, false)
       .boolean(entries.autonomous, 1_200_000, true)
       .boolean(entries.autonomous, 1_600_000, false)
-      .boolean(entries.teleop, 1_000_000, false)
-      .boolean(entries.teleop, 1_600_000, true)
-      .boolean(entries.teleop, 2_000_000, false);
+      .boolean(entries.test, 1_000_000, false)
+      .int64(entries.matchType, 1_000_000, 1);
 
     const result = await analyzeWpiLog(builder.build());
 
@@ -240,6 +239,79 @@ describe("generic EnergyLogger analysis", () => {
       "disabled",
       "autonomous",
       "teleop",
+    ]);
+    expect(result.dataset.segments.modes.every((segment) => segment.isPractice)).toBe(true);
+    expect(Array.from(result.dataset.series.matchType?.values ?? [])).toEqual([1n]);
+  });
+
+  it("derives test mode and preserves MatchType boundaries", async () => {
+    const { builder, entries } = buildEnergyFixture({ includeOptionals: true });
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 120, energy: 1 });
+    appendEnergySample(builder, entries, 4_000_000, { current: 10, power: 120, energy: 4 });
+    builder
+      .boolean(entries.enabled, 1_000_000, true)
+      .boolean(entries.autonomous, 1_000_000, false)
+      .boolean(entries.test, 1_000_000, false)
+      .int64(entries.matchType, 1_000_000, 0)
+      .int64(entries.matchType, 1_250_000, 0)
+      .int64(entries.matchType, 1_500_000, 3)
+      .boolean(entries.test, 2_000_000, true)
+      .boolean(entries.test, 2_500_000, false)
+      .int64(entries.matchType, 3_000_000, 1);
+
+    const dataset = await parseEnergyLog(builder.build());
+
+    expect(Array.from(dataset.series.matchType?.values ?? [])).toEqual([0n, 0n, 3n, 1n]);
+    expect(
+      dataset.segments.modes.map(({ mode, isPractice, startUs, endUs }) => ({
+        mode,
+        isPractice,
+        startUs,
+        endUs,
+      })),
+    ).toEqual([
+      { mode: "teleop", isPractice: false, startUs: 1_000_000, endUs: 1_500_000 },
+      { mode: "teleop", isPractice: false, startUs: 1_500_000, endUs: 2_000_000 },
+      { mode: "test", isPractice: false, startUs: 2_000_000, endUs: 2_500_000 },
+      { mode: "teleop", isPractice: false, startUs: 2_500_000, endUs: 3_000_000 },
+      { mode: "teleop", isPractice: true, startUs: 3_000_000, endUs: 4_000_000 },
+    ]);
+  });
+
+  it("does not fabricate mode intervals when Enabled is missing", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 120, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 10, power: 120, energy: 2 });
+    const namespace = "/UnknownTeam/RealOutputs/DriverStation";
+    const autonomous = builder.start(`${namespace}/Autonomous`, "boolean");
+    const test = builder.start(`${namespace}/Test`, "boolean");
+    builder.boolean(autonomous, 1_000_000, true).boolean(test, 1_000_000, false);
+
+    const dataset = await parseEnergyLog(builder.build());
+
+    expect(dataset.series.enabled).toBeUndefined();
+    expect(dataset.segments.modes).toEqual([]);
+  });
+
+  it("keeps enabled mode generic when Autonomous or Test is unknown", async () => {
+    const { builder, entries } = buildEnergyFixture();
+    appendEnergySample(builder, entries, 1_000_000, { current: 10, power: 120, energy: 1 });
+    appendEnergySample(builder, entries, 2_000_000, { current: 10, power: 120, energy: 2 });
+    const namespace = "/UnknownTeam/RealOutputs/DriverStation";
+    const enabled = builder.start(`${namespace}/Enabled`, "boolean");
+    const autonomous = builder.start(`${namespace}/Autonomous`, "boolean");
+    builder.boolean(enabled, 1_000_000, true).boolean(autonomous, 1_000_000, false);
+
+    const dataset = await parseEnergyLog(builder.build());
+
+    expect(dataset.segments.modes).toEqual([
+      {
+        mode: "enabled",
+        isPractice: false,
+        startUs: 1_000_000,
+        endUs: 2_000_000,
+        durationSeconds: 1,
+      },
     ]);
   });
 

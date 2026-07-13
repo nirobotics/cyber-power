@@ -99,6 +99,13 @@ export class WpiLogFixtureBuilder {
     return this;
   }
 
+  int64(entryId: number, timestampUs: number, value: number | bigint): this {
+    const payload = new Uint8Array(8);
+    new DataView(payload.buffer).setBigInt64(0, BigInt(value), true);
+    this.records.push(encodeRecord(entryId, timestampUs, payload));
+    return this;
+  }
+
   boolean(entryId: number, timestampUs: number, value: boolean): this {
     this.records.push(encodeRecord(entryId, timestampUs, Uint8Array.of(value ? 1 : 0)));
     return this;
@@ -163,7 +170,8 @@ export function buildEnergyFixture(options: EnergyFixtureOptions = {}): {
     );
     entries.enabled = builder.start(`${namespace}/DriverStation/Enabled`, "boolean");
     entries.autonomous = builder.start(`${namespace}/DriverStation/Autonomous`, "boolean");
-    entries.teleop = builder.start(`${namespace}/DriverStation/Teleop`, "boolean");
+    entries.test = builder.start(`${namespace}/DriverStation/Test`, "boolean");
+    entries.matchType = builder.start(`${namespace}/DriverStation/MatchType`, "int64");
   }
   return { builder, entries };
 }

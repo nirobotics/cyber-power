@@ -9,3 +9,5 @@
 - 旧版 NI EnergyLogger 可能用单个尾随 `/` 标记聚合节点（如 `swerve/`）；动态路径规范化只应忽略这个尾随标记并保留原始路径，前导/重复分隔符、尾随连字符及与无尾随路径的规范化冲突仍必须拒绝。
 - ECharts 多图共享游标时，`updateAxisPointer` 不能只传 `xAxisIndex/value`；应传真实像素 `x/y` 与 `axesInfo`，并在程序化同步期间抑制回写事件，否则会出现游标往返跳变。React 侧的高频游标更新还应通过 `requestAnimationFrame` 合并为每帧一次。
 - 动态子系统层级表应依据稳定的 `parentId` 关系构造可见行；默认展开状态为空，只显示根节点与孤立节点，用户展开父级后再逐层显示后代，不能用排序后的相邻行或路径字符串猜层级。
+- 标准 AdvantageKit 不记录独立 Teleop 序列；机器人模式应由 `Enabled`、`Autonomous`、`Test` 的 sample-and-hold 状态推导，Practice 由 `int64 MatchType == 1` 判断。默认比赛范围必须基于合并后的模式区间，不能直接使用可能早于 Enabled 的原始 Autonomous 时间戳；MatchType 重复样本也不能制造每周期边界。
+- 原生 `input[type=range]` 的圆点、外置标签和竖线必须使用同一组完整日志 `min/max`；限制游标只能留在选区时应 clamp `value`，不能把 input 的 `min/max` 改成选区。端点吸附只在 pointer drag 生效，并用像素半径换算时间容差与 pending ref 处理同帧连续事件。

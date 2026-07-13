@@ -1,12 +1,19 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import type { EnergyLogDataset, TimeRange } from "../log-analysis/core";
 import { formatNumber } from "./format";
+import {
+  modeBoundaryTimestamps,
+  type RangeEndpoint,
+  updateRangeEndpoint,
+  visualSnapToleranceUs,
+} from "./time-range";
 
 const MODE_COLORS = {
   disabled: "rgba(126, 139, 157, .18)",
   autonomous: "rgba(155, 124, 255, .38)",
   teleop: "rgba(73, 195, 223, .28)",
   enabled: "rgba(73, 195, 223, .28)",
+  test: "rgba(251, 146, 60, .28)",
 } as const;
 
 const MODE_LABELS = {
@@ -14,9 +21,11 @@ const MODE_LABELS = {
   autonomous: "AUTO",
   teleop: "ENABLED",
   enabled: "ENABLED",
+  test: "TEST",
 } as const;
 
 const BROWNOUT_COLOR = "rgba(248, 113, 113, .88)";
+const SNAP_RADIUS_PX = 8;
 
 const LEGEND_ITEMS = [
   { label: "AUTO", color: MODE_COLORS.autonomous },
@@ -51,28 +60,47 @@ export function FloatingTimeRange({
   const endPercent = rangePercent(endUs, minimumUs, maximumUs);
   const cursorPercent = rangePercent(normalizedCursorUs, minimumUs, maximumUs);
   const pendingRangeRef = useRef<TimeRange>({ startUs, endUs });
+  const committedRangeRef = useRef<TimeRange>({ startUs, endUs });
+  const activeEndpointRef = useRef<RangeEndpoint | null>(null);
+  const modeBoundariesUs = useMemo(
+    () => modeBoundaryTimestamps(dataset.segments.modes, { startUs: minimumUs, endUs: maximumUs }),
+    [dataset.segments.modes, maximumUs, minimumUs],
+  );
 
   useEffect(() => {
     pendingRangeRef.current = { startUs, endUs };
   }, [endUs, startUs]);
 
-  const previewStart = (value: number) => {
-    const next = {
-      startUs: Math.min(endUs, clampMicroseconds(value, minimumUs, maximumUs)),
-      endUs,
-    };
+  const previewEndpoint = (endpoint: RangeEndpoint, value: number, trackWidthPx: number) => {
+    const toleranceUs = activeEndpointRef.current === endpoint
+      ? visualSnapToleranceUs(minimumUs, maximumUs, trackWidthPx, SNAP_RADIUS_PX)
+      : 0;
+    const next = updateRangeEndpoint(
+      pendingRangeRef.current,
+      endpoint,
+      value,
+      { startUs: minimumUs, endUs: maximumUs },
+      modeBoundariesUs,
+      toleranceUs,
+    );
+    if (rangesEqual(next, pendingRangeRef.current)) return;
     pendingRangeRef.current = next;
     onPreviewRange(next);
   };
-  const previewEnd = (value: number) => {
-    const next = {
-      startUs,
-      endUs: Math.max(startUs, clampMicroseconds(value, minimumUs, maximumUs)),
-    };
-    pendingRangeRef.current = next;
-    onPreviewRange(next);
+  const beginPointerDrag = (endpoint: RangeEndpoint) => {
+    activeEndpointRef.current = endpoint;
+    pendingRangeRef.current = { startUs, endUs };
   };
-  const commit = () => onCommitRange(pendingRangeRef.current);
+  const commit = () => {
+    const next = pendingRangeRef.current;
+    if (rangesEqual(next, committedRangeRef.current)) return;
+    committedRangeRef.current = next;
+    onCommitRange(next);
+  };
+  const finishPointerDrag = (endpoint: RangeEndpoint) => {
+    if (activeEndpointRef.current === endpoint) activeEndpointRef.current = null;
+    commit();
+  };
 
   return (
     <>
@@ -141,11 +169,16 @@ export function FloatingTimeRange({
               max={maximumUs}
               step={1}
               value={startUs}
-              onChange={(event) => previewStart(Number(event.currentTarget.value))}
-              onPointerUp={commit}
-              onPointerCancel={commit}
+              onChange={(event) => previewEndpoint(
+                "start",
+                Number(event.currentTarget.value),
+                event.currentTarget.getBoundingClientRect().width,
+              )}
+              onPointerDown={() => beginPointerDrag("start")}
+              onPointerUp={() => finishPointerDrag("start")}
+              onPointerCancel={() => finishPointerDrag("start")}
               onKeyUp={commit}
-              onBlur={commit}
+              onBlur={() => finishPointerDrag("start")}
               aria-label="时间范围开始位置"
               aria-valuetext={`${formatNumber(startUs / 1_000_000, 3)} 秒`}
             />
@@ -156,25 +189,32 @@ export function FloatingTimeRange({
               max={maximumUs}
               step={1}
               value={endUs}
-              onChange={(event) => previewEnd(Number(event.currentTarget.value))}
-              onPointerUp={commit}
-              onPointerCancel={commit}
+              onChange={(event) => previewEndpoint(
+                "end",
+                Number(event.currentTarget.value),
+                event.currentTarget.getBoundingClientRect().width,
+              )}
+              onPointerDown={() => beginPointerDrag("end")}
+              onPointerUp={() => finishPointerDrag("end")}
+              onPointerCancel={() => finishPointerDrag("end")}
               onKeyUp={commit}
-              onBlur={commit}
+              onBlur={() => finishPointerDrag("end")}
               aria-label="时间范围结束位置"
               aria-valuetext={`${formatNumber(endUs / 1_000_000, 3)} 秒`}
             />
             <input
               type="range"
               className="time-range-input time-range-cursor absolute inset-x-0 top-1 z-40 h-10 w-full"
-              min={startUs}
-              max={endUs}
+              min={minimumUs}
+              max={maximumUs}
               step={1}
               value={normalizedCursorUs}
               onChange={(event) => {
                 onCursorChange(clampMicroseconds(Number(event.currentTarget.value), startUs, endUs));
               }}
               aria-label="共享时间游标"
+              aria-valuemin={startUs}
+              aria-valuemax={endUs}
               aria-valuetext={`${formatNumber(cursorSeconds, 3)} 秒`}
             />
 
@@ -204,6 +244,10 @@ function rangePercent(value: number, minimum: number, maximum: number) {
 
 function clamp(value: number, minimum: number, maximum: number) {
   return Math.max(minimum, Math.min(maximum, value));
+}
+
+function rangesEqual(left: TimeRange, right: TimeRange) {
+  return left.startUs === right.startUs && left.endUs === right.endUs;
 }
 
 export function roundMicroseconds(value: number) {

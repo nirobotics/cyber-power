@@ -19,6 +19,7 @@ export type {
   DataQuality,
   DriverStationMode,
   EnergyLogDataset,
+  IntegerSeries,
   LogIssue,
   LogIssueCode,
   ModeInterval,

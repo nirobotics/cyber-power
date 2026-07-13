@@ -43,7 +43,8 @@ async function buildResult(): Promise<AnalysisResult> {
     .boolean(entries.brownedOut, 1_000_000, false)
     .boolean(entries.enabled, 1_000_000, true)
     .boolean(entries.autonomous, 1_000_000, true)
-    .boolean(entries.teleop, 1_000_000, false);
+    .boolean(entries.test, 1_000_000, false)
+    .int64(entries.matchType, 1_000_000, 1);
   appendEnergySample(builder, entries, 2_000_000, { current: 20, power: 240, energy: 3 });
   builder
     .double(entries.voltage, 2_000_000, 11)
@@ -51,7 +52,7 @@ async function buildResult(): Promise<AnalysisResult> {
     .boolean(entries.brownedOut, 2_000_000, false)
     .boolean(entries.enabled, 2_000_000, false)
     .boolean(entries.autonomous, 2_000_000, false)
-    .boolean(entries.teleop, 2_000_000, false);
+    .boolean(entries.test, 2_000_000, false);
   return analyzeWpiLog(builder.build());
 }
 
@@ -66,7 +67,8 @@ function resultBuffers(result: AnalysisResult): ArrayBuffer[] {
     dataset.series.brownedOut,
     dataset.series.enabled,
     dataset.series.autonomous,
-    dataset.series.teleop,
+    dataset.series.test,
+    dataset.series.matchType,
     ...dataset.subsystems.flatMap((subsystem) => [
       subsystem.currentA,
       subsystem.powerW,

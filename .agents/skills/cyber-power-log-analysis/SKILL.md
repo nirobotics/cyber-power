@@ -34,7 +34,7 @@ Analyze the EnergyLogger contract rather than a team number, project name, robot
 - Require WPILOG 1.0, the three total `double` series, and at least one dynamic path with complete current, power, and energy series.
 - Treat AdvantageKit numeric series as sample-and-hold state. Use cumulative energy deltas for energy and time-weighted definitions for derived metrics.
 - Recover only a truncated final record. Reject structural corruption before the trusted tail.
-- Report missing optional voltage, Brownout, Enabled, Autonomous, or Teleop series as limitations rather than fabricating values.
+- Report missing optional voltage, Brownout, Enabled, Autonomous, Test, or MatchType series as limitations rather than fabricating values.
 - Preserve typed arrays and streaming or chunked reads. Do not duplicate the entire input in browser memory.
 - Keep parser and metric code independent of React. The UI and Web Worker consume the same core API.
 

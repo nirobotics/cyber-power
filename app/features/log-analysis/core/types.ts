@@ -94,6 +94,12 @@ export interface BooleanSeries {
   entryName: string;
 }
 
+export interface IntegerSeries {
+  timestampsUs: Float64Array;
+  values: BigInt64Array;
+  entryName: string;
+}
+
 export interface TimeRange {
   startUs: number;
   endUs: number;
@@ -103,10 +109,11 @@ export interface TimeInterval extends TimeRange {
   durationSeconds: number;
 }
 
-export type DriverStationMode = "disabled" | "autonomous" | "teleop" | "enabled";
+export type DriverStationMode = "disabled" | "autonomous" | "teleop" | "test" | "enabled";
 
 export interface ModeInterval extends TimeInterval {
   mode: DriverStationMode;
+  isPractice: boolean;
 }
 
 export interface SubsystemNode {
@@ -156,7 +163,8 @@ export interface EnergyLogDataset {
     brownoutVoltageV?: NumericSeries;
     enabled?: BooleanSeries;
     autonomous?: BooleanSeries;
-    teleop?: BooleanSeries;
+    test?: BooleanSeries;
+    matchType?: IntegerSeries;
   };
   subsystems: SubsystemNode[];
   segments: {

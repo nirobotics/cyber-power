@@ -1,4 +1,4 @@
-import { LayoutDashboard, Network, ShieldCheck } from "lucide-react";
+import { Bot, Network, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { AnalysisResult, TimeRange } from "../log-analysis/core";
 import { analyzeEnergyRange } from "../log-analysis/core";
@@ -8,21 +8,25 @@ import { FloatingTimeRange } from "./floating-time-range";
 import { MetricsRail } from "./metrics-rail";
 import { SubsystemShare } from "./subsystem-share";
 import { SubsystemTable } from "./subsystem-table";
+import { selectDefaultTimeRange } from "./time-range";
 
 type DashboardTab = "robot" | "subsystems" | "quality";
 
 const TABS = [
-  { value: "robot", label: "整机", Icon: LayoutDashboard },
+  { value: "robot", label: "整机", Icon: Bot },
   { value: "subsystems", label: "子系统", Icon: Network },
   { value: "quality", label: "数据质量", Icon: ShieldCheck },
 ] as const;
 
 export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const { dataset } = result;
-  const initialRange = {
-    startUs: Math.round(result.range.range.startUs),
-    endUs: Math.round(result.range.range.endUs),
-  };
+  const initialRange = selectDefaultTimeRange(
+    {
+      startUs: Math.round(result.range.range.startUs),
+      endUs: Math.round(result.range.range.endUs),
+    },
+    dataset.segments.modes,
+  );
   const [tab, setTab] = useState<DashboardTab>("robot");
   const [committedRange, setCommittedRange] = useState<TimeRange>(() => ({
     startUs: initialRange.startUs,

@@ -46,7 +46,52 @@ const CHART_THEME = {
 } as const;
 
 export type SubsystemMetric = "power" | "current" | "energy";
+export type RobotMetric = "voltage" | "current" | "power" | "energy";
 export type TimelineFocus = "power" | "current" | null;
+
+const ROBOT_CHARTS = [
+  {
+    metric: "voltage",
+    label: "电池电压",
+    zoomId: "robot-voltage-time-range",
+    ariaLabel: "机器人电池电压时间图",
+    focus: null,
+  },
+  {
+    metric: "current",
+    label: "总电流",
+    zoomId: "robot-current-time-range",
+    ariaLabel: "机器人总电流时间图",
+    focus: "current",
+  },
+  {
+    metric: "power",
+    label: "总功率",
+    zoomId: "robot-power-time-range",
+    ariaLabel: "机器人总功率时间图",
+    focus: "power",
+  },
+  {
+    metric: "energy",
+    label: "累计能量",
+    zoomId: "robot-energy-time-range",
+    ariaLabel: "机器人累计能量时间图",
+    focus: null,
+  },
+] as const satisfies ReadonlyArray<{
+  metric: RobotMetric;
+  label: string;
+  zoomId: string;
+  ariaLabel: string;
+  focus: TimelineFocus;
+}>;
+
+const ROBOT_LEGEND_ITEMS = [
+  { label: "电池电压", color: COLORS.voltage },
+  { label: "总电流", color: COLORS.current },
+  { label: "总功率", color: COLORS.power },
+  { label: "累计能量", color: COLORS.energy },
+] as const;
 
 export function RobotTimeline({
   dataset,
@@ -62,23 +107,51 @@ export function RobotTimeline({
   onCursorChange: (cursorUs: number) => void;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, getInitialTheme, getServerTheme);
-  const robotOption = useMemo(() => createRobotOption(dataset, theme), [dataset, theme]);
+  const options = useMemo(
+    () => Object.fromEntries(
+      ROBOT_CHARTS.map(({ metric, zoomId }) => [metric, createRobotTimelineOption(dataset, metric, theme, zoomId)]),
+    ) as Record<RobotMetric, EChartsOption>,
+    [dataset, theme],
+  );
+  const showThreshold = (dataset.series.brownoutVoltageV?.values.length ?? 0) > 0;
 
   return (
-    <section className="card min-w-0 overflow-hidden" aria-label="机器人总状态">
-      <TimelineChart
-        dataset={dataset}
-        option={robotOption}
-        zoomId="robot-time-range"
-        cursorAxisIndex={3}
-        range={range}
-        cursorUs={cursorUs}
-        focus={focus}
-        onCursorChange={onCursorChange}
-        className="h-[520px] min-h-[480px]"
-        ariaLabel="机器人电池电压、总电流、总功率和累计能量时间图"
-      />
-    </section>
+    <div className="grid gap-2.5" aria-label="机器人总状态">
+      <section className="card flex flex-wrap gap-x-4 gap-y-2 px-4 py-3" aria-label="整机曲线图例">
+        {ROBOT_LEGEND_ITEMS.map((item) => (
+          <span key={item.label} className="inline-flex items-center gap-1.5 text-xs text-ink-dim">
+            <span className="h-0 w-4 border-t-2" style={{ borderColor: item.color }} aria-hidden />
+            {item.label}
+          </span>
+        ))}
+        {showThreshold ? (
+          <span className="inline-flex items-center gap-1.5 text-xs text-ink-dim">
+            <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: COLORS.threshold }} aria-hidden />
+            Brownout 电压阈值
+          </span>
+        ) : null}
+      </section>
+
+      {ROBOT_CHARTS.map(({ metric, label, zoomId, ariaLabel, focus: metricFocus }) => (
+        <section key={metric} className="card min-w-0 overflow-hidden" aria-label={`整机${label}`}>
+          <div className="border-b border-line px-4 py-2.5">
+            <h2 className="text-xs font-semibold text-ink">{label}</h2>
+          </div>
+          <TimelineChart
+            dataset={dataset}
+            option={options[metric]}
+            zoomId={zoomId}
+            cursorAxisIndex={0}
+            range={range}
+            cursorUs={cursorUs}
+            focus={focus === metricFocus ? focus : null}
+            onCursorChange={onCursorChange}
+            className="h-[300px] min-h-[260px]"
+            ariaLabel={ariaLabel}
+          />
+        </section>
+      ))}
+    </div>
   );
 }
 
@@ -266,45 +339,78 @@ function TimelineChart({
   return <div ref={containerRef} className={`w-full ${className}`} role="img" aria-label={ariaLabel} />;
 }
 
-function createRobotOption(dataset: EnergyLogDataset, theme: ThemeMode): EChartsOption {
+export function createRobotTimelineOption(
+  dataset: EnergyLogDataset,
+  metric: RobotMetric,
+  theme: ThemeMode,
+  zoomId: string,
+): EChartsOption {
   const palette = CHART_THEME[theme];
   const startSeconds = dataset.bounds.energyStartUs / 1_000_000;
   const endSeconds = dataset.bounds.energyEndUs / 1_000_000;
-  const axis = xAxisCommon(startSeconds, endSeconds, palette);
-  const areas = timelineAreas(dataset, theme);
-  const xAxisIndexes = [0, 1, 2, 3];
-  const threshold = heldSeriesPairs(dataset.series.brownoutVoltageV, dataset.bounds.energyStartUs, dataset.bounds.energyEndUs);
+  const config: Record<RobotMetric, {
+    label: string;
+    unit: string;
+    color: string;
+    id: string;
+    series: NumericSeries | undefined;
+    stepped: boolean;
+  }> = {
+    voltage: {
+      label: "电池电压",
+      unit: "V",
+      color: COLORS.voltage,
+      id: "battery-voltage",
+      series: dataset.series.batteryVoltageV,
+      stepped: true,
+    },
+    current: {
+      label: "总电流",
+      unit: "A",
+      color: COLORS.current,
+      id: "total-current",
+      series: dataset.series.totalCurrentA,
+      stepped: true,
+    },
+    power: {
+      label: "总功率",
+      unit: "W",
+      color: COLORS.power,
+      id: "total-power",
+      series: dataset.series.totalPowerW,
+      stepped: true,
+    },
+    energy: {
+      label: "累计能量",
+      unit: "Wh",
+      color: COLORS.energy,
+      id: "total-energy",
+      series: dataset.series.totalEnergyWh,
+      stepped: false,
+    },
+  };
+  const selected = config[metric];
+  const areas = metric === "voltage" ? timelineAreas(dataset, theme) : [];
+  const data = metric === "energy" ? relativeEnergyPairs(selected.series) : seriesPairs(selected.series);
+  const threshold = metric === "voltage"
+    ? heldSeriesPairs(dataset.series.brownoutVoltageV, dataset.bounds.energyStartUs, dataset.bounds.energyEndUs)
+    : [];
 
   return {
     backgroundColor: "transparent",
     animation: false,
     textStyle: { fontFamily: "Inter, Segoe UI, Microsoft YaHei, sans-serif", color: palette.text },
-    axisPointer: { link: [{ xAxisIndex: xAxisIndexes }] },
     tooltip: tooltipOption(palette),
-    legend: legendOption(palette),
-    grid: [
-      { left: 64, right: 18, top: 42, height: 72 },
-      { left: 64, right: 18, top: 148, height: 72 },
-      { left: 64, right: 18, top: 254, height: 72 },
-      { left: 64, right: 18, top: 360, height: 78 },
-    ],
-    xAxis: xAxisIndexes.map((gridIndex) => ({
-      ...axis,
-      gridIndex,
-      axisPointer: axis.axisPointer,
-      axisLabel: gridIndex === 3
-        ? { color: palette.muted, fontSize: 10, formatter: (value: number) => `${value.toFixed(0)}s` }
-        : { show: false },
-    })),
-    yAxis: [
-      yAxis("电压 (V)", COLORS.voltage, 0, palette),
-      yAxis("总电流 (A)", COLORS.current, 1, palette),
-      yAxis("总功率 (W)", COLORS.power, 2, palette),
-      yAxis("累计能量 (Wh)", COLORS.energy, 3, palette),
-    ],
-    dataZoom: [controlledZoom("robot-time-range", xAxisIndexes)],
+    grid: [{ left: 64, right: 18, top: 20, bottom: 44 }],
+    xAxis: [{
+      ...xAxisCommon(startSeconds, endSeconds, palette),
+      gridIndex: 0,
+      axisLabel: { color: palette.muted, fontSize: 10, formatter: (value: number) => `${value.toFixed(0)}s` },
+    }],
+    yAxis: [yAxis(`${selected.label} (${selected.unit})`, selected.color, 0, palette)],
+    dataZoom: [controlledZoom(zoomId, [0])],
     series: [
-      lineSeries("battery-voltage", "电池电压", seriesPairs(dataset.series.batteryVoltageV), COLORS.voltage, 0, 0, areas, true),
+      lineSeries(selected.id, selected.label, data, selected.color, 0, 0, areas, selected.stepped),
       ...(threshold.length > 0
         ? [{
             id: "brownout-voltage",
@@ -320,9 +426,6 @@ function createRobotOption(dataset: EnergyLogDataset, theme: ThemeMode): ECharts
             itemStyle: { color: COLORS.threshold },
           }]
         : []),
-      lineSeries("total-current", "总电流", seriesPairs(dataset.series.totalCurrentA), COLORS.current, 1, 1, [], true),
-      lineSeries("total-power", "总功率", seriesPairs(dataset.series.totalPowerW), COLORS.power, 2, 2, [], true),
-      lineSeries("total-energy", "累计能量", relativeEnergyPairs(dataset.series.totalEnergyWh), COLORS.energy, 3, 3),
     ],
   };
 }
@@ -454,21 +557,6 @@ function tooltipOption(palette: (typeof CHART_THEME)[ThemeMode]) {
   };
 }
 
-function legendOption(palette: (typeof CHART_THEME)[ThemeMode]) {
-  return {
-    type: "scroll" as const,
-    top: 2,
-    left: 56,
-    right: 12,
-    icon: "roundRect",
-    itemWidth: 12,
-    itemHeight: 3,
-    pageIconColor: COLORS.energy,
-    pageTextStyle: { color: palette.muted },
-    textStyle: { color: palette.muted, fontSize: 10 },
-  };
-}
-
 function controlledZoom(id: string, xAxisIndex: number[]) {
   return {
     id,
@@ -499,7 +587,9 @@ export function syncCursor(
   focus: TimelineFocus,
   suppression?: { current: boolean },
 ) {
-  const axisIndex = focus === "current" ? 1 : focus === "power" ? 2 : defaultAxisIndex;
+  const focusedAxisIndex = focus === "current" ? 1 : focus === "power" ? 2 : defaultAxisIndex;
+  const option = chart.getOption() as { xAxis?: unknown[] };
+  const axisIndex = focusedAxisIndex < (option.xAxis?.length ?? 0) ? focusedAxisIndex : defaultAxisIndex;
   const seconds = Math.round(cursorUs) / 1_000_000;
   const point = axisCursorPoint(chart, axisIndex, seconds);
   if (!point) return;
@@ -637,12 +727,14 @@ function timelineAreas(dataset: EnergyLogDataset, theme: ThemeMode) {
         autonomous: "rgba(155, 124, 255, .13)",
         teleop: "rgba(85, 194, 176, .10)",
         enabled: "rgba(73, 195, 223, .09)",
+        test: "rgba(251, 146, 60, .10)",
       }
     : {
         disabled: "rgba(91, 83, 108, .06)",
         autonomous: "rgba(91, 53, 213, .10)",
         teleop: "rgba(20, 122, 61, .08)",
         enabled: "rgba(37, 99, 235, .08)",
+        test: "rgba(234, 88, 12, .08)",
       };
   const modeAreas: TimelineArea[] = dataset.segments.modes.map((segment) => [
     {

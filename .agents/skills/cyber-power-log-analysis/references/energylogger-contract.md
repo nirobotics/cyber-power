@@ -70,8 +70,19 @@ SystemStats/BrownedOut
 SystemStats/BrownoutVoltage
 DriverStation/Enabled
 DriverStation/Autonomous
-DriverStation/Teleop
+DriverStation/Test
+DriverStation/MatchType
 ```
+
+AdvantageKit records `Enabled`, `Autonomous`, and `Test` as sample-and-hold boolean
+control-word state. It does not record a separate Teleop series; derive Teleop only when
+Enabled is true and both Autonomous and Test are known false. `MatchType` is an `int64`
+enum (`0=None`, `1=Practice`, `2=Qualification`, `3=Elimination`). Match-type changes
+split mode intervals, and an interval is Practice only when the held value is `1`.
+
+Do not invent a specific mode when state is missing. Without Enabled, mode intervals are
+unavailable. With Enabled but an unknown Autonomous or Test value, retain a generic enabled
+mode unless a true Autonomous or Test value identifies the state.
 
 Missing optional entries reduce the available UI but do not make an otherwise valid EnergyLogger log incompatible. Render absent values as unavailable.
 

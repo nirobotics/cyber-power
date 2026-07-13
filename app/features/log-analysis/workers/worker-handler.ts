@@ -28,6 +28,13 @@ export function collectTransferables(result: AnalysisResult): Transferable[] {
     buffers.add(series.timestampsUs.buffer as ArrayBuffer);
     buffers.add(series.values.buffer as ArrayBuffer);
   };
+  const addInteger = (
+    series: { timestampsUs: Float64Array; values: BigInt64Array } | undefined,
+  ) => {
+    if (!series) return;
+    buffers.add(series.timestampsUs.buffer as ArrayBuffer);
+    buffers.add(series.values.buffer as ArrayBuffer);
+  };
   const { dataset } = result;
   addNumeric(dataset.series.totalCurrentA);
   addNumeric(dataset.series.totalPowerW);
@@ -37,7 +44,8 @@ export function collectTransferables(result: AnalysisResult): Transferable[] {
   addBoolean(dataset.series.brownedOut);
   addBoolean(dataset.series.enabled);
   addBoolean(dataset.series.autonomous);
-  addBoolean(dataset.series.teleop);
+  addBoolean(dataset.series.test);
+  addInteger(dataset.series.matchType);
   for (const subsystem of dataset.subsystems) {
     addNumeric(subsystem.currentA);
     addNumeric(subsystem.powerW);

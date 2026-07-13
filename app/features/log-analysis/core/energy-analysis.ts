@@ -6,6 +6,7 @@ import type {
   DataQuality,
   DriverStationMode,
   EnergyLogDataset,
+  IntegerSeries,
   LogIssue,
   ModeInterval,
   NumericSeries,
@@ -35,6 +36,7 @@ interface MutableSeries {
   timestampsUs: number[];
   numericValues: number[];
   booleanValues: number[];
+  integerValues: bigint[];
   monotonic: boolean;
   droppedNonfinite: number;
   negativeValues: number;
@@ -42,7 +44,7 @@ interface MutableSeries {
 
 interface EntryBinding {
   series: MutableSeries;
-  expectedType: "double" | "boolean";
+  expectedType: OptionalValueType;
 }
 
 interface DynamicGroup {
@@ -53,14 +55,17 @@ interface DynamicGroup {
   energy?: MutableSeries;
 }
 
-const OPTIONAL_SUFFIXES = new Map<string, "double" | "boolean">([
+type OptionalValueType = "double" | "boolean" | "int64";
+
+const OPTIONAL_SUFFIXES = new Map<string, OptionalValueType>([
   ["/energyLogger/BatteryVoltageVolt", "double"],
   ["/SystemStats/BatteryVoltage", "double"],
   ["/SystemStats/BrownedOut", "boolean"],
   ["/SystemStats/BrownoutVoltage", "double"],
   ["/DriverStation/Enabled", "boolean"],
   ["/DriverStation/Autonomous", "boolean"],
-  ["/DriverStation/Teleop", "boolean"],
+  ["/DriverStation/Test", "boolean"],
+  ["/DriverStation/MatchType", "int64"],
 ]);
 
 const EXPECTED_UNITS: Record<string, { output: string; accepted: Set<string> }> = {
@@ -91,6 +96,7 @@ function createMutableSeries(name: string): MutableSeries {
     timestampsUs: [],
     numericValues: [],
     booleanValues: [],
+    integerValues: [],
     monotonic: true,
     droppedNonfinite: 0,
     negativeValues: 0,
@@ -123,7 +129,7 @@ function parseEnergyName(name: string): EnergyName | undefined {
   return undefined;
 }
 
-function optionalExpectedType(name: string): "double" | "boolean" | undefined {
+function optionalExpectedType(name: string): OptionalValueType | undefined {
   for (const [suffix, type] of OPTIONAL_SUFFIXES) {
     if (name === suffix.slice(1) || name.endsWith(suffix)) return type;
   }
@@ -162,6 +168,26 @@ function readBoundValue(record: WpiLogDataRecord, binding: EntryBinding): void {
     appendTimestamp(series, record.timestampUs);
     series.numericValues.push(value);
     if (value < 0) series.negativeValues += 1;
+    return;
+  }
+
+  if (expectedType === "int64") {
+    if (record.payload.byteLength !== 8) {
+      throw new LogAnalysisError(
+        fatalIssue(
+          "CORRUPT_RECORD_MIDDLE",
+          `Int64 entry ${record.entry.name} has a ${record.payload.byteLength}-byte payload`,
+          { offset: record.offset, entryName: record.entry.name },
+        ),
+      );
+    }
+    const value = new DataView(
+      record.payload.buffer,
+      record.payload.byteOffset,
+      record.payload.byteLength,
+    ).getBigInt64(0, true);
+    appendTimestamp(series, record.timestampUs);
+    series.integerValues.push(value);
     return;
   }
 
@@ -242,6 +268,32 @@ function finalizeBoolean(series: MutableSeries): BooleanSeries {
   return {
     timestampsUs: finalized.timestamps,
     values: Uint8Array.from(finalized.values),
+    entryName: series.name,
+  };
+}
+
+function finalizeInteger(series: MutableSeries): IntegerSeries {
+  let indices = Array.from({ length: series.timestampsUs.length }, (_, index) => index);
+  if (!series.monotonic) {
+    indices = indices.sort(
+      (left, right) =>
+        series.timestampsUs[left] - series.timestampsUs[right] || left - right,
+    );
+  }
+  const timestampsUs: number[] = [];
+  const values: bigint[] = [];
+  for (const index of indices) {
+    const timestampUs = series.timestampsUs[index];
+    if (timestampsUs.at(-1) === timestampUs) {
+      values[values.length - 1] = series.integerValues[index];
+    } else {
+      timestampsUs.push(timestampUs);
+      values.push(series.integerValues[index]);
+    }
+  }
+  return {
+    timestampsUs: Float64Array.from(timestampsUs),
+    values: BigInt64Array.from(values),
     entryName: series.name,
   };
 }
@@ -479,6 +531,28 @@ function optionalBoolean(
   return finalizeBoolean(series);
 }
 
+function optionalInteger(
+  series: MutableSeries | undefined,
+  label: string,
+  issues: LogIssue[],
+): IntegerSeries | undefined {
+  if (!series) {
+    issues.push(warningIssue("OPTIONAL_SERIES_MISSING", `${label} is not present`));
+    return undefined;
+  }
+  if (series.types.size !== 1 || !series.types.has("int64")) {
+    issues.push(
+      warningIssue("OPTIONAL_TYPE_MISMATCH", `${label} is not an int64 series`, {
+        entryName: series.name,
+        details: { declaredTypes: [...series.types] },
+      }),
+    );
+    return undefined;
+  }
+  if (series.integerValues.length === 0) return undefined;
+  return finalizeInteger(series);
+}
+
 function upperBound(values: Float64Array, target: number): number {
   let low = 0;
   let high = values.length;
@@ -499,6 +573,21 @@ function heldBoolean(series: BooleanSeries | undefined, timestampUs: number): bo
   if (!series) return false;
   const index = upperBound(series.timestampsUs, timestampUs) - 1;
   return index >= 0 && series.values[index] !== 0;
+}
+
+function heldBooleanState(
+  series: BooleanSeries | undefined,
+  timestampUs: number,
+): boolean | undefined {
+  if (!series) return undefined;
+  const index = upperBound(series.timestampsUs, timestampUs) - 1;
+  return index >= 0 ? series.values[index] !== 0 : undefined;
+}
+
+function heldInteger(series: IntegerSeries | undefined, timestampUs: number): bigint | undefined {
+  if (!series) return undefined;
+  const index = upperBound(series.timestampsUs, timestampUs) - 1;
+  return index >= 0 ? series.values[index] : undefined;
 }
 
 function cumulativeDelta(
@@ -590,28 +679,49 @@ function booleanIntervals(
 function modeAt(
   enabled: BooleanSeries | undefined,
   autonomous: BooleanSeries | undefined,
-  teleop: BooleanSeries | undefined,
+  test: BooleanSeries | undefined,
   timestampUs: number,
-): DriverStationMode {
-  if (!heldBoolean(enabled, timestampUs)) return "disabled";
-  if (heldBoolean(autonomous, timestampUs)) return "autonomous";
-  if (heldBoolean(teleop, timestampUs)) return "teleop";
+): DriverStationMode | undefined {
+  const enabledState = heldBooleanState(enabled, timestampUs);
+  if (enabledState === undefined) return undefined;
+  if (!enabledState) return "disabled";
+  const autonomousState = heldBooleanState(autonomous, timestampUs);
+  const testState = heldBooleanState(test, timestampUs);
+  if (testState === true) return "test";
+  if (autonomousState === true) return "autonomous";
+  if (autonomousState === false && testState === false) return "teleop";
   return "enabled";
 }
 
 function modeIntervals(
   enabled: BooleanSeries | undefined,
   autonomous: BooleanSeries | undefined,
-  teleop: BooleanSeries | undefined,
+  test: BooleanSeries | undefined,
+  matchType: IntegerSeries | undefined,
   startUs: number,
   endUs: number,
 ): ModeInterval[] {
-  if (endUs <= startUs) return [];
+  if (!enabled || endUs <= startUs) return [];
   const transitions = new Set<number>([startUs, endUs]);
-  for (const series of [enabled, autonomous, teleop]) {
+  for (const series of [enabled, autonomous, test]) {
     if (!series) continue;
     for (const timestampUs of series.timestampsUs) {
       if (timestampUs > startUs && timestampUs < endUs) transitions.add(timestampUs);
+    }
+  }
+  const matchTypeBoundaries = new Set<number>();
+  if (matchType) {
+    let previousValue = heldInteger(matchType, startUs);
+    let index = upperBound(matchType.timestampsUs, startUs);
+    while (index < matchType.timestampsUs.length && matchType.timestampsUs[index] < endUs) {
+      const timestampUs = matchType.timestampsUs[index];
+      const nextValue = matchType.values[index];
+      if (nextValue !== previousValue) {
+        transitions.add(timestampUs);
+        matchTypeBoundaries.add(timestampUs);
+      }
+      previousValue = nextValue;
+      index += 1;
     }
   }
   const sorted = [...transitions].sort((left, right) => left - right);
@@ -619,14 +729,22 @@ function modeIntervals(
   for (let index = 0; index < sorted.length - 1; index += 1) {
     const segmentStart = sorted[index];
     const segmentEnd = sorted[index + 1];
-    const mode = modeAt(enabled, autonomous, teleop, segmentStart);
+    const mode = modeAt(enabled, autonomous, test, segmentStart);
+    if (!mode) continue;
+    const isPractice = heldInteger(matchType, segmentStart) === 1n;
     const previous = intervals.at(-1);
-    if (previous?.mode === mode && previous.endUs === segmentStart) {
+    if (
+      previous?.mode === mode &&
+      previous.isPractice === isPractice &&
+      previous.endUs === segmentStart &&
+      !matchTypeBoundaries.has(segmentStart)
+    ) {
       previous.endUs = segmentEnd;
       previous.durationSeconds = (previous.endUs - previous.startUs) / 1_000_000;
     } else {
       intervals.push({
         mode,
+        isPractice,
         startUs: segmentStart,
         endUs: segmentEnd,
         durationSeconds: (segmentEnd - segmentStart) / 1_000_000,
@@ -894,9 +1012,14 @@ export async function parseEnergyLog(
     "Driver Station autonomous state",
     issues,
   );
-  const teleop = optionalBoolean(
-    findOptional(seriesByName, namespace, "DriverStation/Teleop"),
-    "Driver Station teleop state",
+  const test = optionalBoolean(
+    findOptional(seriesByName, namespace, "DriverStation/Test"),
+    "Driver Station test state",
+    issues,
+  );
+  const matchType = optionalInteger(
+    findOptional(seriesByName, namespace, "DriverStation/MatchType"),
+    "Driver Station match type",
     issues,
   );
 
@@ -995,13 +1118,21 @@ export async function parseEnergyLog(
       brownoutVoltageV,
       enabled,
       autonomous,
-      teleop,
+      test,
+      matchType,
     },
     subsystems,
     segments: {
       brownouts: booleanIntervals(brownedOut, energyStartUs, energyEndUs),
       enabled: booleanIntervals(enabled, energyStartUs, energyEndUs),
-      modes: modeIntervals(enabled, autonomous, teleop, energyStartUs, energyEndUs),
+      modes: modeIntervals(
+        enabled,
+        autonomous,
+        test,
+        matchType,
+        energyStartUs,
+        energyEndUs,
+      ),
     },
     quality,
   };

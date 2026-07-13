@@ -1,11 +1,16 @@
 import * as echarts from "echarts";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { EnergyLogDataset, NumericSeries, SubsystemNode } from "../log-analysis/core";
 import {
+  createRobotTimelineOption,
   createSubsystemTimelineOption,
   heldSeriesPairs,
+  RobotTimeline,
   seriesPairs,
   syncCursor,
+  type RobotMetric,
   type SubsystemMetric,
 } from "./energy-timeline";
 
@@ -113,6 +118,71 @@ describe("shared ECharts cursor", () => {
       charts.forEach((chart) => chart.dispose());
     }
   });
+
+  it("falls back to the only axis when a peak focus targets a split robot chart", () => {
+    const chart = cursorChart(1);
+    let emittedAxisIndex = -1;
+    chart.on("updateAxisPointer", (...args: unknown[]) => {
+      const event = args[0] as { axesInfo?: Array<{ axisDim?: string; axisIndex?: number }> };
+      emittedAxisIndex = event.axesInfo?.find((axis) => axis.axisDim === "x")?.axisIndex ?? -1;
+    });
+
+    try {
+      syncCursor(chart, 0, 5_000_000, "power");
+      expect(emittedAxisIndex).toBe(0);
+    } finally {
+      chart.dispose();
+    }
+  });
+});
+
+describe("robot timeline cards", () => {
+  it("builds one chart option per metric without the old multi-grid legend", () => {
+    const dataset = robotDataset();
+    const cases: Array<{ metric: RobotMetric; zoomId: string; seriesIds: string[] }> = [
+      { metric: "voltage", zoomId: "robot-voltage-time-range", seriesIds: ["battery-voltage", "brownout-voltage"] },
+      { metric: "current", zoomId: "robot-current-time-range", seriesIds: ["total-current"] },
+      { metric: "power", zoomId: "robot-power-time-range", seriesIds: ["total-power"] },
+      { metric: "energy", zoomId: "robot-energy-time-range", seriesIds: ["total-energy"] },
+    ];
+
+    for (const testCase of cases) {
+      const option = robotOptionView(createRobotTimelineOption(dataset, testCase.metric, "dark", testCase.zoomId));
+      expect(option.grid).toHaveLength(1);
+      expect(option.xAxis).toHaveLength(1);
+      expect(option.yAxis).toHaveLength(1);
+      expect(option.dataZoom[0]?.id).toBe(testCase.zoomId);
+      expect(option.legend).toBeUndefined();
+      expect(option.series.map((series) => series.id)).toEqual(testCase.seriesIds);
+    }
+  });
+
+  it("keeps the mode and brownout areas on voltage only", () => {
+    const dataset = robotDataset();
+    const voltage = robotOptionView(createRobotTimelineOption(dataset, "voltage", "dark", "voltage"));
+    const current = robotOptionView(createRobotTimelineOption(dataset, "current", "dark", "current"));
+
+    expect(voltage.series[0]?.markArea?.data).toHaveLength(2);
+    expect(current.series[0]?.markArea).toBeUndefined();
+  });
+
+  it("renders a separate legend and four equal-height chart cards", () => {
+    const dataset = robotDataset();
+    const markup = renderToStaticMarkup(createElement(RobotTimeline, {
+      dataset,
+      range: { startUs: 0, endUs: 1_000_000 },
+      cursorUs: 500_000,
+      focus: "power",
+      onCursorChange: () => undefined,
+    }));
+
+    expect(markup).toContain('aria-label="整机曲线图例"');
+    expect(markup).toContain('aria-label="整机电池电压"');
+    expect(markup).toContain('aria-label="整机总电流"');
+    expect(markup).toContain('aria-label="整机总功率"');
+    expect(markup).toContain('aria-label="整机累计能量"');
+    expect(markup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(4);
+  });
 });
 
 describe("subsystem timeline options", () => {
@@ -208,6 +278,21 @@ function subsystemDataset(node: SubsystemNode): EnergyLogDataset {
   };
 }
 
+function robotDataset(): EnergyLogDataset {
+  const dataset = subsystemDataset(subsystemNode());
+  dataset.series.batteryVoltageV = numeric([12.4, 10.8], "V");
+  dataset.series.brownoutVoltageV = numeric([6.3, 6.2], "V");
+  dataset.segments.modes = [{
+    startUs: 0,
+    endUs: 1_000_000,
+    durationSeconds: 1,
+    mode: "autonomous",
+    isPractice: false,
+  }];
+  dataset.segments.brownouts = [{ startUs: 400_000, endUs: 500_000, durationSeconds: 0.1 }];
+  return dataset;
+}
+
 function optionView(option: unknown) {
   return option as {
     dataZoom: Array<{ id?: string }>;
@@ -215,18 +300,31 @@ function optionView(option: unknown) {
   };
 }
 
-function cursorChart() {
+function robotOptionView(option: unknown) {
+  return option as {
+    dataZoom: Array<{ id?: string }>;
+    grid: unknown[];
+    xAxis: unknown[];
+    yAxis: unknown[];
+    legend?: unknown;
+    series: Array<{ id?: string; markArea?: { data?: unknown[] } }>;
+  };
+}
+
+function cursorChart(axisCount = 4) {
   const chart = echarts.init(null, undefined, {
     renderer: "svg",
     ssr: true,
     width: 800,
     height: 500,
   });
-  const grids = [20, 130, 240, 350].map((top) => ({ left: 60, right: 20, top, height: 80 }));
+  const grids = [20, 130, 240, 350]
+    .slice(0, axisCount)
+    .map((top) => ({ left: 60, right: 20, top, height: 80 }));
   chart.setOption({
     animation: false,
     tooltip: { trigger: "axis" },
-    axisPointer: { link: [{ xAxisIndex: [0, 1, 2, 3] }] },
+    axisPointer: { link: [{ xAxisIndex: grids.map((_grid, index) => index) }] },
     grid: grids,
     xAxis: grids.map((_grid, gridIndex) => ({
       type: "value",
