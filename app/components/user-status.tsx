@@ -1,4 +1,4 @@
-import { LogIn, LogOut } from "lucide-react";
+import { LogOut } from "lucide-react";
 import { useRef } from "react";
 import type { PublicUser } from "../lib/auth-types";
 import { clearOfflineShell } from "../lib/pwa";
@@ -6,15 +6,9 @@ import { clearOfflineShell } from "../lib/pwa";
 export function UserStatus({
   user,
   loading,
-  allowGuest,
-  onLogin,
-  logoutHref = "/auth/logout",
 }: {
   user: PublicUser | null;
   loading: boolean;
-  allowGuest: boolean;
-  onLogin: () => void;
-  logoutHref?: string;
 }) {
   const formRef = useRef<HTMLFormElement>(null);
   const submittingRef = useRef(false);
@@ -31,19 +25,7 @@ export function UserStatus({
     );
   }
 
-  if (!user) {
-    if (!allowGuest) return null;
-    return (
-      <button
-        type="button"
-        className="inline-flex h-9 shrink-0 items-center gap-2 rounded-md border border-[var(--border)] bg-[var(--panel)] px-3 text-sm font-medium text-[var(--muted)] transition hover:bg-[var(--background)] hover:text-[var(--foreground)] focus:outline-none focus:ring-2 focus:ring-[var(--accent)] focus:ring-offset-2 focus:ring-offset-[var(--panel)]"
-        onClick={onLogin}
-      >
-        <LogIn className="size-4" aria-hidden />
-        <span className="hidden sm:inline">登录</span>
-      </button>
-    );
-  }
+  if (!user) return null;
 
   return (
     <>
@@ -64,7 +46,7 @@ export function UserStatus({
       <form
         ref={formRef}
         method="post"
-        action={logoutHref}
+        action="/auth/logout"
         onSubmit={(event) => {
           if (submittingRef.current) return;
           event.preventDefault();

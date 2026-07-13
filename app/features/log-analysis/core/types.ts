@@ -292,29 +292,11 @@ export interface SupplyLimitTotals {
   robotEstimateAvailable: boolean;
 }
 
-export interface SupplyLimitTargetTimeline {
-  nodeId: string;
-  observedCurrentA: Float64Array;
-  estimatedCurrentA: Float64Array;
-}
-
-export interface SupplyLimitTimeline {
-  timestampsUs: Float64Array;
-  observedTotalCurrentA: Float64Array;
-  estimatedTotalCurrentA?: Float64Array;
-  observedTotalPowerW: Float64Array;
-  estimatedTotalPowerW?: Float64Array;
-  observedTotalEnergyWh: Float64Array;
-  estimatedTotalEnergyWh?: Float64Array;
-  targets: SupplyLimitTargetTimeline[];
-}
-
 export interface SupplyLimitEstimate {
   range: TimeRange & { durationSeconds: number };
   limits: SupplyCurrentLimitInput[];
   targets: SupplyLimitTargetEstimate[];
   totals: SupplyLimitTotals;
-  timeline: SupplyLimitTimeline;
   warnings: SupplyLimitWarning[];
 }
 

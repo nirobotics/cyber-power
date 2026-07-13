@@ -24,7 +24,7 @@ export async function openCliInput(fileArgument: string | undefined): Promise<Cl
   };
 }
 
-export function optionValue(args: string[], name: string): string | undefined {
+function optionValue(args: string[], name: string): string | undefined {
   const index = args.indexOf(name);
   if (index < 0) return undefined;
   const value = args[index + 1];

@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { hasOfflineShell, PWA_STATUS_EVENT } from "../lib/pwa";
+import { hasOfflineShell } from "../lib/pwa";
 
 export function PwaRegistration() {
   useEffect(() => {
@@ -8,9 +8,6 @@ export function PwaRegistration() {
         immediate: true,
         onOfflineReady() {
           void prepareOfflineShell();
-        },
-        onRegisterError() {
-          globalThis.dispatchEvent(new CustomEvent(PWA_STATUS_EVENT, { detail: "error" }));
         },
       });
     });
@@ -29,9 +26,8 @@ async function prepareOfflineShell() {
       headers: { Accept: "text/html" },
     });
     if (!response.ok || !(await waitForOfflineShell())) throw new Error("Offline shell was not cached");
-    globalThis.dispatchEvent(new CustomEvent(PWA_STATUS_EVENT, { detail: "ready" }));
   } catch {
-    globalThis.dispatchEvent(new CustomEvent(PWA_STATUS_EVENT, { detail: "error" }));
+    return;
   }
 }
 

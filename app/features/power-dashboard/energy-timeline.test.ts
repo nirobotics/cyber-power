@@ -1,4 +1,4 @@
-import * as echarts from "echarts";
+import { SVGRenderer } from "echarts/renderers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
@@ -16,6 +16,9 @@ import {
   type RobotMetric,
   type SubsystemMetric,
 } from "./energy-timeline";
+import { echarts } from "./echarts-runtime";
+
+echarts.use([SVGRenderer]);
 
 function numeric(values: number[], unit = "W"): NumericSeries {
   return {
@@ -42,6 +45,37 @@ describe("timeline downsampling", () => {
     expect(pairs).toHaveLength(6);
     expect(values).toEqual([0, 50, -20, -40, 75, 0]);
     expect(pairs.map((pair) => pair[0])).toEqual([...pairs.map((pair) => pair[0])].sort((a, b) => a - b));
+  });
+});
+
+describe("modular ECharts runtime", () => {
+  it("registers every production component used by timeline options", () => {
+    const chart = echarts.init(null, undefined, {
+      renderer: "svg",
+      ssr: true,
+      width: 320,
+      height: 180,
+    });
+
+    try {
+      chart.setOption({
+        animation: false,
+        tooltip: { trigger: "axis" },
+        grid: { left: 20, right: 20, top: 20, bottom: 20 },
+        xAxis: { type: "value", min: 0, max: 1 },
+        yAxis: { type: "value" },
+        dataZoom: [{ type: "inside", xAxisIndex: [0], start: 0, end: 100 }],
+        series: [{
+          type: "line",
+          data: [[0, 0], [1, 1]],
+          markArea: { data: [[{ xAxis: 0.25 }, { xAxis: 0.75 }]] },
+        }],
+      });
+
+      expect(chart.renderToSVGString()).toContain("<svg");
+    } finally {
+      chart.dispose();
+    }
   });
 });
 

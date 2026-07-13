@@ -1,64 +1,34 @@
 import type { ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
 import { AppFooter } from "./app-footer";
 import { AppHeader } from "./app-header";
 import type { PublicUser } from "../lib/auth-types";
 
 export function AppShell({
-  appName,
-  appSubtitle,
   centerTitle,
-  version,
   user,
   authLoading,
-  allowGuest,
   busy,
-  onLogin,
   onReplaceFile,
   children,
-  Icon,
-  demoHref,
-  fixedDesktop = false,
 }: {
-  appName: string;
-  appSubtitle: string;
   centerTitle?: string | null;
-  version: string;
   user: PublicUser | null;
   authLoading: boolean;
-  allowGuest: boolean;
   busy: boolean;
-  onLogin: () => void;
   onReplaceFile?: (() => void) | null;
   children: ReactNode;
-  Icon?: LucideIcon;
-  demoHref?: string;
-  fixedDesktop?: boolean;
 }) {
   return (
-    <div
-      className={[
-        "flex min-h-dvh flex-col bg-[var(--background)] text-[var(--foreground)]",
-        fixedDesktop ? "md:h-dvh md:overflow-hidden" : "",
-      ].join(" ")}
-    >
+    <div className="flex min-h-dvh flex-col bg-[var(--background)] text-[var(--foreground)]">
       <TopProgressBar active={busy} />
       <AppHeader
-        appName={appName}
-        appSubtitle={appSubtitle}
         centerTitle={centerTitle}
         user={user}
         authLoading={authLoading}
-        allowGuest={allowGuest}
-        onLogin={onLogin}
         onReplaceFile={onReplaceFile}
-        Icon={Icon}
-        demoHref={demoHref}
       />
-      <main className={fixedDesktop ? "flex-1 p-2.5 md:min-h-0 md:overflow-hidden" : "flex-1 p-2.5"}>
-        {children}
-      </main>
-      <AppFooter version={version} />
+      <main className="flex-1 p-2.5">{children}</main>
+      <AppFooter />
     </div>
   );
 }

@@ -1,5 +1,4 @@
-import { Analytics } from "@vercel/analytics/react";
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import {
   isRouteErrorResponse,
   Links,
@@ -38,12 +37,21 @@ export function Layout({ children }: { children: ReactNode }) {
       <body suppressHydrationWarning>
         {children}
         <PwaRegistration />
-        <Analytics mode={getAnalyticsMode()} />
+        <DeferredAnalytics />
         <ScrollRestoration />
         <Scripts />
       </body>
     </html>
   );
+}
+
+function DeferredAnalytics() {
+  useEffect(() => {
+    void import("@vercel/analytics").then(({ inject }) => {
+      inject({ framework: "react", mode: getAnalyticsMode() });
+    });
+  }, []);
+  return null;
 }
 
 function getAnalyticsMode() {

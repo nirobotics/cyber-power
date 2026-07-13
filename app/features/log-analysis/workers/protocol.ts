@@ -1,4 +1,4 @@
-import type { AnalysisResult, LogIssue, ParseOptions } from "../core";
+import type { AnalysisResult, LogIssue } from "../core";
 
 export interface AnalyzeWorkerOptions {
   chunkSize?: number;
@@ -29,11 +29,3 @@ export type LogAnalysisWorkerResponse =
       requestId: string;
       error: { name: string; message: string; issues?: LogIssue[] };
     };
-
-export function toParseOptions(
-  options: AnalyzeWorkerOptions | undefined,
-  signal: AbortSignal,
-  onProgress: NonNullable<ParseOptions["onProgress"]>,
-): ParseOptions {
-  return { ...options, signal, onProgress };
-}

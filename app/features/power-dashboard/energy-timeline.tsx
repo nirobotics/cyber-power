@@ -1,8 +1,24 @@
 import { Eye, EyeOff } from "lucide-react";
-import { useEffect, useMemo, useRef, useSyncExternalStore } from "react";
-import type { ECharts, EChartsOption } from "echarts";
+import type { LineSeriesOption } from "echarts/charts";
+import type {
+  DataZoomComponentOption,
+  GridComponentOption,
+  MarkAreaComponentOption,
+  TooltipComponentOption,
+} from "echarts/components";
+import type { ComposeOption, ECharts } from "echarts/core";
+import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { getInitialTheme, THEME_EVENT, type ThemeMode } from "../../lib/theme";
 import type { EnergyLogDataset, NumericSeries, SubsystemNode, TimeRange } from "../log-analysis/core";
+import { SUBSYSTEM_TIMELINE_COLORS } from "./subsystem-colors";
+
+type EChartsOption = ComposeOption<
+  | LineSeriesOption
+  | GridComponentOption
+  | TooltipComponentOption
+  | DataZoomComponentOption
+  | MarkAreaComponentOption
+>;
 
 const COLORS = {
   voltage: "#f5b82e",
@@ -10,20 +26,7 @@ const COLORS = {
   current: "#49c3df",
   power: "#5b8ff9",
   energy: "#b084ff",
-  subsystem: [
-    "#9b7cff",
-    "#ef5b5b",
-    "#55c2b0",
-    "#f58a35",
-    "#9acb34",
-    "#f5c542",
-    "#5b8ff9",
-    "#df5ca6",
-    "#4cc9f0",
-    "#c084fc",
-    "#fb7185",
-    "#2dd4bf",
-  ],
+  subsystem: SUBSYSTEM_TIMELINE_COLORS,
 };
 
 const CHART_THEME = {
@@ -93,6 +96,25 @@ const ROBOT_LEGEND_ITEMS = [
   { label: "累计能量", color: COLORS.energy },
 ] as const;
 
+function TimelineChartCard({
+  title,
+  ariaLabel,
+  children,
+}: {
+  title: string;
+  ariaLabel: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="card min-w-0 overflow-hidden" aria-label={ariaLabel}>
+      <div className="border-b border-line px-4 py-2.5">
+        <h2 className="text-xs font-semibold text-ink">{title}</h2>
+      </div>
+      {children}
+    </section>
+  );
+}
+
 export function RobotTimeline({
   dataset,
   range,
@@ -137,10 +159,7 @@ export function RobotTimeline({
       </section>
 
       {ROBOT_CHARTS.map(({ metric, label, zoomId, ariaLabel, focus: metricFocus }) => (
-        <section key={metric} className="card min-w-0 overflow-hidden" aria-label={`整机${label}`}>
-          <div className="border-b border-line px-4 py-2.5">
-            <h2 className="text-xs font-semibold text-ink">{label}</h2>
-          </div>
+        <TimelineChartCard key={metric} title={label} ariaLabel={`整机${label}`}>
           <TimelineChart
             dataset={dataset}
             option={options[metric]}
@@ -155,7 +174,7 @@ export function RobotTimeline({
             className="h-[300px] min-h-[260px]"
             ariaLabel={ariaLabel}
           />
-        </section>
+        </TimelineChartCard>
       ))}
     </div>
   );
@@ -229,10 +248,7 @@ export function SubsystemTimelines({
       </section>
 
       {SUBSYSTEM_CHARTS.map(({ metric, label, zoomId, ariaLabel }) => (
-        <section key={metric} className="card min-w-0 overflow-hidden" aria-label={`子系统${label}`}>
-          <div className="border-b border-line px-4 py-2.5">
-            <h2 className="text-xs font-semibold text-ink">{label}</h2>
-          </div>
+        <TimelineChartCard key={metric} title={label} ariaLabel={`子系统${label}`}>
           <TimelineChart
             dataset={dataset}
             option={options[metric]}
@@ -247,7 +263,7 @@ export function SubsystemTimelines({
             className="h-[300px] min-h-[260px]"
             ariaLabel={ariaLabel}
           />
-        </section>
+        </TimelineChartCard>
       ))}
     </div>
   );
@@ -308,7 +324,7 @@ function TimelineChart({
     let resizeObserver: ResizeObserver | undefined;
     let cleanupPointerInteractions: (() => void) | undefined;
 
-    void import("echarts").then((echarts) => {
+    void import("./echarts-runtime").then(({ echarts }) => {
       if (cancelled || !containerRef.current) return;
       const chart = echarts.init(containerRef.current, undefined, { renderer: "canvas" });
       chartRef.current = chart;

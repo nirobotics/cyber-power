@@ -36,7 +36,7 @@ function lengthPrefixed(text: string): Uint8Array {
   return concat([unsignedLe(bytes.byteLength, 4), bytes]);
 }
 
-export function encodeRecord(
+function encodeRecord(
   entryId: number,
   timestampUs: number,
   payload: Uint8Array,

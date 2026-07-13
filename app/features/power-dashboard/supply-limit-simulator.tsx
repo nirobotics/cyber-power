@@ -1,14 +1,14 @@
 import {
   AlertTriangle,
-  ChevronDown,
-  ChevronRight,
   CircleHelp,
   Trash2,
 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { SupplyLimitEstimate } from "../log-analysis/core";
 import { formatDuration, formatNumber } from "./format";
+import { HierarchyPathCell } from "./hierarchy-path-cell";
 import { buildHierarchyTableRows } from "./hierarchy-table";
+import { ToggleSwitch } from "./toggle-switch";
 
 export interface SupplyLimitTargetOption {
   id: string;
@@ -250,29 +250,13 @@ export function SupplyLimitSimulator({
             明细
           </h2>
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              role="switch"
-              aria-checked={simulationEnabled}
-              aria-label={simulationEnabled ? "关闭限流模拟" : "启用限流模拟"}
+            <ToggleSwitch
+              checked={simulationEnabled}
+              ariaLabel={simulationEnabled ? "关闭限流模拟" : "启用限流模拟"}
               title={simulationEnabled ? "关闭限流模拟" : "启用限流模拟"}
               disabled={!simulationEnabled && !canEnableSimulation}
-              onClick={() => onSimulationEnabledChange(!simulationEnabled)}
-              className={[
-                "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
-                simulationEnabled
-                  ? "border-brand bg-brand"
-                  : "border-ink-faint/70 bg-surface-2",
-              ].join(" ")}
-            >
-              <span
-                className={[
-                  "pointer-events-none absolute left-0.5 top-0.5 size-5 rounded-full border border-line bg-white shadow-sm transition-transform",
-                  simulationEnabled ? "translate-x-5" : "translate-x-0",
-                ].join(" ")}
-                aria-hidden
-              />
-            </button>
+              onCheckedChange={onSimulationEnabledChange}
+            />
             <button
               type="button"
               className="grid size-8 place-items-center rounded-md text-ink-faint outline-none transition hover:bg-danger/10 hover:text-danger focus-visible:ring-2 focus-visible:ring-danger/40"
@@ -366,39 +350,21 @@ export function SupplyLimitSimulator({
                       conflict ? "bg-danger/5" : "",
                     ].join(" ")}
                   >
-                    <td
+                    <HierarchyPathCell
                       className="max-w-[260px] px-4 py-2.5 align-top font-mono text-ink"
-                      title={target.rawPath}
-                    >
-                      <div
-                        className="flex min-w-0 items-center gap-1"
-                        style={{ paddingLeft: `${visualDepth * 16}px` }}
-                      >
-                        {hasChildren ? (
-                          <button
-                            type="button"
-                            className="grid size-6 shrink-0 place-items-center rounded text-ink-dim outline-none transition hover:bg-bg hover:text-ink focus-visible:ring-2 focus-visible:ring-brand/50"
-                            onClick={() => toggleExpanded(target.id)}
-                            aria-expanded={expanded}
-                            aria-label={`${expanded ? "收起" : "展开"}${target.rawPath}的下级子系统`}
-                            title={expanded ? "收起下级子系统" : "展开下级子系统"}
-                          >
-                            {expanded ? (
-                              <ChevronDown className="size-3.5" aria-hidden />
-                            ) : (
-                              <ChevronRight className="size-3.5" aria-hidden />
-                            )}
-                          </button>
-                        ) : (
-                          <span className="size-6 shrink-0" aria-hidden="true" />
-                        )}
-                        <span className="min-w-0 truncate">{target.rawPath}</span>
-                        {!expanded && enabledDescendantCount > 0 ? (
+                      path={target.rawPath}
+                      visualDepth={visualDepth}
+                      hasChildren={hasChildren}
+                      expanded={expanded}
+                      onToggle={() => toggleExpanded(target.id)}
+                      suffix={
+                        !expanded && enabledDescendantCount > 0 ? (
                           <span className="shrink-0 rounded-full bg-brand/10 px-1.5 py-0.5 font-sans text-[9px] text-brand">
                             下级已启用 {enabledDescendantCount}
                           </span>
-                        ) : null}
-                      </div>
+                        ) : null
+                      }
+                    >
                       {target.unavailableReason ? (
                         <span
                           id={unavailableId}
@@ -407,7 +373,7 @@ export function SupplyLimitSimulator({
                           {target.unavailableReason}
                         </span>
                       ) : null}
-                    </td>
+                    </HierarchyPathCell>
                     <td className="px-3 py-2.5 align-top font-mono text-ink">
                       {formatNumber(target.energyWh, 4)} Wh
                     </td>
@@ -483,31 +449,15 @@ export function SupplyLimitSimulator({
                       ) : null}
                     </td>
                     <td className="px-4 py-2.5 align-top">
-                      <button
-                        type="button"
-                        role="switch"
-                        aria-checked={draft.enabled}
-                        aria-label={`${draft.enabled ? "停用" : "启用"}${target.rawPath}限流`}
-                        aria-describedby={describedBy}
+                      <ToggleSwitch
+                        checked={draft.enabled}
+                        ariaLabel={`${draft.enabled ? "停用" : "启用"}${target.rawPath}限流`}
+                        ariaDescribedBy={describedBy}
                         disabled={Boolean(target.unavailableReason)}
-                        onClick={() =>
-                          onUpdateDraft(target.id, { enabled: !draft.enabled })
+                        onCheckedChange={(enabled) =>
+                          onUpdateDraft(target.id, { enabled })
                         }
-                        className={[
-                          "relative inline-flex h-6 w-11 shrink-0 items-center rounded-full border outline-none transition-colors focus-visible:ring-2 focus-visible:ring-brand/50 disabled:cursor-not-allowed disabled:opacity-40",
-                          draft.enabled
-                            ? "border-brand bg-brand"
-                            : "border-ink-faint/70 bg-surface-2",
-                        ].join(" ")}
-                      >
-                        <span
-                          className={[
-                            "pointer-events-none absolute left-0.5 top-0.5 size-5 rounded-full border border-line bg-white shadow-sm transition-transform",
-                            draft.enabled ? "translate-x-5" : "translate-x-0",
-                          ].join(" ")}
-                          aria-hidden
-                        />
-                      </button>
+                      />
                     </td>
                   </tr>
                 );

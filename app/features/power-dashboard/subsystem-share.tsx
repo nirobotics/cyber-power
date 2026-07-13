@@ -1,7 +1,6 @@
 import type { EnergyLogDataset, RangeAnalysis } from "../log-analysis/core";
 import { formatNumber } from "./format";
-
-const COLORS = ["#9b7cff", "#ef5b5b", "#55c2b0", "#f58a35", "#9acb34", "#f5c542", "#5b8ff9", "#df5ca6"];
+import { SUBSYSTEM_COLORS } from "./subsystem-colors";
 
 export function SubsystemShare({
   dataset,
@@ -41,7 +40,7 @@ export function SubsystemShare({
             {rows.map(({ metric, node }, index) => (
               <li key={metric.id} className="border-b border-line/70 py-2.5 last:border-b-0">
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="size-2 shrink-0 rounded-full" style={{ background: COLORS[index % COLORS.length] }} />
+                  <span className="size-2 shrink-0 rounded-full" style={{ background: SUBSYSTEM_COLORS[index % SUBSYSTEM_COLORS.length] }} />
                   <span className="min-w-0 flex-1 truncate font-mono text-ink" title={node?.rawPath}>
                     {node?.rawPath ?? metric.rawPath}
                   </span>
@@ -53,7 +52,7 @@ export function SubsystemShare({
                     className="h-full rounded-full"
                     style={{
                       width: `${Math.max(0, Math.min(100, (metric.share ?? 0) * 100))}%`,
-                      background: COLORS[index % COLORS.length],
+                      background: SUBSYSTEM_COLORS[index % SUBSYSTEM_COLORS.length],
                     }}
                   />
                 </div>

@@ -57,4 +57,48 @@ describe("WPILOG 1.0 decoder", () => {
         error.issues[0]?.code === "UNSUPPORTED_VERSION",
     );
   });
+
+  it("rejects timestamps above JavaScript's exact integer range with the exact value", async () => {
+    const builder = new WpiLogFixtureBuilder();
+    const entry = builder.start("/Example/Raw", "raw");
+    builder.appendBytes(
+      Uint8Array.of(
+        0x70,
+        entry,
+        1,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0x20,
+        0,
+        1,
+      ),
+    );
+
+    await expect(listWpiLog(builder.build())).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof LogAnalysisError &&
+        error.issues[0]?.code === "CORRUPT_RECORD_MIDDLE" &&
+        error.issues[0]?.details?.timestamp === "9007199254740992",
+    );
+  });
+
+  it("decodes a data record larger than the internal decode window", async () => {
+    const builder = new WpiLogFixtureBuilder();
+    const entry = builder.start("/Example/Raw", "raw");
+    builder.raw(entry, 1, new Uint8Array(256 * 1024)).raw(entry, 2, Uint8Array.of(7));
+
+    const listing = await listWpiLog(builder.build());
+
+    expect(listing.file).toMatchObject({
+      recordCount: 3,
+      dataRecordCount: 2,
+      controlRecordCount: 1,
+      lastTimestampUs: 2,
+    });
+    expect(listing.entries[0]).toMatchObject({ recordCount: 2, lastTimestampUs: 2 });
+  });
 });

@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AnalysisResult, LogIssue } from "../log-analysis/core";
-import { AnalysisDashboard } from "./analysis-dashboard";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import type { AnalysisResult } from "../log-analysis/core";
+import type { LogAnalysisWorkerResponse } from "../log-analysis/workers/protocol";
 import { FileDropZone } from "./file-drop-zone";
 
-type WorkerResponse =
-  | { type: "progress"; requestId: string; processedBytes: number; totalBytes?: number }
-  | { type: "result"; requestId: string; result: AnalysisResult }
-  | { type: "error"; requestId: string; error: { name: string; message: string; issues?: LogIssue[] } };
+const loadAnalysisDashboard = () => import("./analysis-dashboard");
+const AnalysisDashboard = lazy(async () => {
+  const module = await loadAnalysisDashboard();
+  return { default: module.AnalysisDashboard };
+});
 
 export type AnalysisWorkspaceChrome = {
   fileName: string;
@@ -76,8 +77,9 @@ export function AnalysisWorkspace({
     setError(null);
     setBusy(true);
     setProgress({ ratio: 0, message: "正在验证 WPILOG 文件头…" });
+    void loadAnalysisDashboard().catch(() => undefined);
 
-    worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
+    worker.onmessage = (event: MessageEvent<LogAnalysisWorkerResponse>) => {
       const message = event.data;
       if (message.requestId !== requestRef.current) return;
       if (message.type === "progress") {
@@ -95,6 +97,7 @@ export function AnalysisWorkspace({
         return;
       }
       setBusy(false);
+      releaseWorker(workerRef, requestRef, worker, requestId);
       if (message.type === "result") {
         setProgress({ ratio: 1, message: "分析完成" });
         setResult(message.result);
@@ -108,14 +111,33 @@ export function AnalysisWorkspace({
     worker.onerror = () => {
       if (requestId !== requestRef.current) return;
       setBusy(false);
+      releaseWorker(workerRef, requestRef, worker, requestId);
       setError("日志分析线程意外停止，请重试。");
     };
 
     worker.postMessage({ type: "analyze", requestId, file: nextFile });
   };
 
-  if (file && result) return <AnalysisDashboard result={result} />;
+  if (file && result) {
+    return (
+      <Suspense fallback={<div className="min-h-32" role="status" aria-label="正在加载分析界面" />}>
+        <AnalysisDashboard result={result} />
+      </Suspense>
+    );
+  }
   return <FileDropZone busy={busy} progress={progress} error={error} onFile={analyze} />;
+}
+
+function releaseWorker(
+  workerRef: RefObject<Worker | null>,
+  requestRef: RefObject<string | null>,
+  worker: Worker,
+  requestId: string,
+) {
+  if (workerRef.current !== worker || requestRef.current !== requestId) return;
+  worker.terminate();
+  workerRef.current = null;
+  requestRef.current = null;
 }
 
 function validateFile(file: File) {

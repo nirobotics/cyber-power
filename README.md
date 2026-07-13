@@ -22,7 +22,6 @@ Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG
 - `supabase/`：仅飞书登录用户资料所需的数据库 migration。
 - `docs/architecture.md`：解析、认证、离线和存储边界。
 - `docs/validation.md`：真实日志金标与验收方法。
-- `docs/design/`：产品界面设计依据。
 
 ## 给人看的工具
 
@@ -57,15 +56,17 @@ pnpm typecheck
 pnpm lint
 pnpm test
 pnpm build
+pnpm bundle:check
 ```
 
 ```powershell
 pnpm log:list -- "C:\path\robot.wpilog"
 pnpm log:analyze -- "C:\path\robot.wpilog"
 pnpm log:analyze -- "C:\path\robot.wpilog" --start 120 --end 135 --json
+pnpm log:benchmark -- --warmup 1 --runs 5 "C:\path\robot.wpilog"
 ```
 
-`log:list` 只检查容器并列出 entries；`log:analyze` 会校验 EnergyLogger 契约并计算指标。真实样例结果见 [验证文档](docs/validation.md)。
+`log:list` 只检查容器并列出 entries；`log:analyze` 会校验 EnergyLogger 契约并计算指标；`log:benchmark` 记录解析、区间分析、可选限流模拟与进程内存。`bundle:report` 查看构建组成，`bundle:check` 执行不依赖私有日志的体积门禁。真实样例与性能基线见 [验证文档](docs/validation.md)。
 
 ## 维护规则
 
