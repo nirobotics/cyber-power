@@ -10,4 +10,5 @@
 - 解析器支持旧版 EnergyLogger 用单个尾随 `/` 标记聚合节点；前导/重复分隔符、中间空段、尾随连字符和规范化冲突仍必须 fatal，仅最后一条不完整 record 可降级恢复。
 - Driver Station 模式使用标准 AdvantageKit 的 Enabled、Autonomous、Test 与 int64 MatchType；Teleop 由三项布尔状态推导，MatchType 仅在原始值变化时切分区间，缺少 Enabled 时不伪造模式。
 - 平均功率在日志包含 `Enabled` 序列时仅统计选区内 Enabled 区间的能量与时长；全 Disabled 返回 0，缺少 `Enabled` 时回退到完整选区。总能量、占比、峰值与调和结果仍按完整选区计算。
-- 2026-07-13 在 Node 22.23.1 / pnpm 11.5.0 下 103 项测试、typecheck、lint、生产 build 与 PWA 生成通过；59.6 MiB 金标及两份尾随 `/` hopper 日志完整解析均无 fatal，默认模式范围分别为 `187.593231–420.606922s`、`129.761164–293.815472s`、`210.291942–374.910003s`；金标默认选区完整时长 `233.013691s`、有效时长 `222.133652s`、Brownout `41` 次、Enabled-only 平均功率 `1359.116 W`。
+- 子系统页提供多目标 Supply Current 历史反事实回放：上限是 EnergyLogger 节点合计 Supply Current；终端节点可直接使用，带子节点的同构聚合组必须由用户确认；同一方案的启用目标必须互不重复且不存在祖先/后代重叠。电流与功率按 sample-and-hold 比例缩放，累计能量只缩放正增量并分段处理 reset，整机结果保留未选中负载残差，平均功率沿用 Enabled-only 口径。该模型不预测 Stator Current、电池电压、Brownout、机构动作或动作耗时。
+- 2026-07-13 在 Node 22.23.1 / pnpm 11.5.0 下 143 项测试、typecheck、lint、生产 build 与 PWA 生成通过；59.6 MiB 金标及两份尾随 `/` hopper 日志完整解析均无 fatal，默认模式范围分别为 `187.593231–420.606922s`、`129.761164–293.815472s`、`210.291942–374.910003s`。三份日志的双目标限流回放均满足顺序不变、高限零变化和峰值不越限，估算耗时分别为 `23.6ms`、`11.4ms`、`12.6ms`；金标默认选区完整时长 `233.013691s`、有效时长 `222.133652s`、Brownout `41` 次、Enabled-only 平均功率 `1359.116 W`。

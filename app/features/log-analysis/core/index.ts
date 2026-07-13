@@ -1,5 +1,10 @@
 export { LogAnalysisError } from "./errors";
 export { analyzeEnergyRange, analyzeWpiLog, parseEnergyLog } from "./energy-analysis";
+export {
+  estimateSupplyCurrentLimits,
+  SupplyLimitValidationError,
+  validateSupplyCurrentLimits,
+} from "./supply-limit-estimator";
 export { decodeWpiLog } from "./wpilog-decoder";
 export type { WpiLogDataRecord, WpiLogDecoderHandlers } from "./wpilog-decoder";
 
@@ -29,6 +34,19 @@ export type {
   ReconciliationSummary,
   SubsystemNode,
   SubsystemRangeMetrics,
+  SupplyCurrentLimitInput,
+  SupplyLimitEstimate,
+  SupplyLimitEstimateOptions,
+  SupplyLimitMetricSnapshot,
+  SupplyLimitNodeKind,
+  SupplyLimitTargetEstimate,
+  SupplyLimitTargetTimeline,
+  SupplyLimitTimeline,
+  SupplyLimitTotals,
+  SupplyLimitValidationCode,
+  SupplyLimitValidationIssue,
+  SupplyLimitWarning,
+  SupplyLimitWarningCode,
   TimeInterval,
   TimeRange,
   TruncatedTail,

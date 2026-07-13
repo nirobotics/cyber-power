@@ -72,6 +72,30 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 | `akit_26-05-02_14-23-15_hopper_e6.wpilog` | 129.761164 s | 293.815472 s |
 | `akit_26-05-02_14-03-42_hopper_e4.wpilog` | 210.291942 s | 374.910003 s |
 
+## Supply Current 限流估算回归
+
+自动化回归覆盖以下模型约束：
+
+- 顶层终端节点可直接使用合计 Supply Current 上限；聚合节点必须由用户确认其代表同构电机组；
+- 多个互不重叠目标作为一个方案原子应用，输入顺序不影响结果；重复节点和祖先/后代组合必须拒绝；
+- 电流和功率按 sample-and-hold 同比例缩放；高于已记录峰值的上限不改变结果，上限降低时估算节省量单调不减；
+- 累计 Wh 只缩放正增量，reset 分段处理；电流不大于 0 但功率或能量为正的区段保持原样；
+- 存在 `Enabled` 时平均功率排除 Disabled，全 Disabled 选区为 `0 W`；
+- 整机结果保留未选中负载的残差；明显负的整机扣减结果不得强制钳制为 0，而应保留逐目标结果并将整机估算标记为不可用；
+- 源数据的 reset、时间断层、非有限样本、负值、子序列缺失和对账差异会映射为显式估算提示；源 typed arrays 不得被修改。
+
+2026-07-13 使用三份真实日志完成双目标回放；每份均有 26 个可选节点，目标峰值未超过输入上限，输入顺序反转后指标与时间序列逐点一致，高于历史峰值的上限产生严格零变化：
+
+| 日志 | 代表性双目标 | 节省能量 | 估算耗时 |
+| --- | --- | ---: | ---: |
+| `akit_26-07-12_15-41-02.wpilog` | 顶层终端 `indexer` + `swerve/drive/moduleBR` | 1.628806 Wh | 23.6 ms |
+| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | 已确认聚合 `indexer` + `shooter/flywheel` | 0.426392 Wh | 11.4 ms |
+| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | 已确认聚合 `indexer` + `shooter/flywheel` | 0.803912 Wh | 12.6 ms |
+
+三份日志的整机估算均可用；两份旧日志中的 `swerve/` 尾随斜杠均正确规范化。日志仅从原下载位置读取，未复制或提交到仓库。
+
+这些回归只验证历史反事实模型，不把估算曲线当作真实限流后的硬件测量。电池电压、Brownout、机构动作和 Stator Current 均不在预测范围内。
+
 ## 自动测试范围
 
 - WPILOG header、control record、typed payload、尾截断和中段损坏；
@@ -81,4 +105,5 @@ pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 - 飞书 state、PKCE、returnTo、生产 callback、签名 Cookie、code exchange、tenant 校验与 Supabase 用户资料 upsert；
 - Worker progress/result/error、typed-array transferable、取消与同 requestId 替换；
 - 图表 min/max 包络抽样、阶梯采样保持、共享游标同步和三类子系统图，确保功率和电流尖峰不会被等步长抽样丢失；
+- 多目标 Supply Current 方案校验、sample-and-hold 缩放、累计能量 reset、Enabled-only 平均功率、整机残差保留和估算图表；
 - React Router 生产 build、PWA manifest/service worker 与客户端 secret 扫描。

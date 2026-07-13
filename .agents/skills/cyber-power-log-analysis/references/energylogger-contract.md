@@ -6,6 +6,7 @@
 - Root and entry discovery
 - Dynamic hierarchy
 - Metric definitions
+- Supply current limit historical replay estimator
 - Optional robot state
 - Error policy
 
@@ -63,6 +64,34 @@ Current and power are instantaneous sample-and-hold state. Energy is cumulative 
 - Share: a node's energy divided by the energy of its siblings for the same parent.
 
 Use integer microseconds internally for bounds and seconds only for display or CLI options.
+
+## Supply current limit historical replay estimator
+
+Treat each configured limit as a cap on the recorded **total Supply Current** of one EnergyLogger node, not as a per-motor limit. A terminal node has no recorded children and is eligible even when it is top-level and represents a motor group. A node with children is eligible only after the user confirms that the aggregate represents a homogeneous motor group.
+
+One scenario may contain multiple active targets. Active targets must be unique and form an antichain in the EnergyLogger hierarchy: never accept both an ancestor and any of its descendants, because that would subtract the same load twice. Independent siblings and independent branches may be estimated together, and input order must not affect the result.
+
+For target current `I`, power `P`, and Supply Current limit `L`, use the held values at each timeline timestamp:
+
+```text
+s = I > 0 ? min(1, L / I) : 1
+I' = I > 0 ? min(I, L) : I
+P' = P * s
+```
+
+Do not derive energy by reintegrating power. For each cumulative-energy sample, scale only a nonnegative increment by `s` evaluated from the held current at that sample timestamp. A decrease in cumulative energy is a reset: close the preceding segment, add no negative delta, and continue from the new value. If held current is not positive while power or energy still increases, preserve that source contribution and emit a confidence warning rather than claiming savings.
+
+When Driver Station Enabled is available, estimated average power uses only scaled cumulative-energy increments inside the selected range's Enabled intersections divided by their total duration. An all-Disabled selection is `0 W`. Fall back to the complete selected duration only when Enabled is unavailable.
+
+Preserve the robot residual outside selected targets. At each timestamp for current and power, and over cumulative increments for energy, compute the estimated robot total as:
+
+```text
+estimated total = observed total - sum(observed target - estimated target)
+```
+
+Do not rebuild the robot total by summing subsystem nodes. If residual preservation produces a materially negative robot current, power, or energy, keep per-target estimates but mark the robot estimate unavailable.
+
+This is a counterfactual replay under a proportional-scaling assumption. It does not predict Stator Current, battery voltage, Brownout events, mechanism dynamics, action completion, or action timing, and it must not alter the recorded robot-state series.
 
 ## Optional robot state
 

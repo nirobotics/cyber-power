@@ -1,16 +1,48 @@
 import { Bot, Network, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { AnalysisResult, TimeRange } from "../log-analysis/core";
-import { analyzeEnergyRange } from "../log-analysis/core";
+import type {
+  AnalysisResult,
+  SupplyCurrentLimitInput,
+  SupplyLimitEstimate,
+  TimeRange,
+} from "../log-analysis/core";
+import {
+  analyzeEnergyRange,
+  estimateSupplyCurrentLimits,
+  SupplyLimitValidationError,
+  validateSupplyCurrentLimits,
+} from "../log-analysis/core";
 import { DataQualityDetails } from "./data-quality-details";
 import { RobotTimeline, SubsystemTimelines, type TimelineFocus } from "./energy-timeline";
 import { FloatingTimeRange } from "./floating-time-range";
 import { MetricsRail } from "./metrics-rail";
 import { SubsystemShare } from "./subsystem-share";
 import { SubsystemTable } from "./subsystem-table";
+import {
+  buildSupplyLimitTargetOptions,
+  normalizeAppliedSupplyLimitDrafts,
+  supplyLimitDraftsMatchInputs,
+  supplyLimitDraftsToInputs,
+  supplyLimitInputsToDrafts,
+  supplyLimitIssuesToDisplay,
+} from "./supply-limit-state";
+import {
+  SupplyLimitSimulator,
+  type SupplyLimitDisplayError,
+  type SupplyLimitDraft,
+  type SupplyLimitDraftPatch,
+} from "./supply-limit-simulator";
+import { SupplyLimitTimeline } from "./supply-limit-timeline";
 import { selectDefaultTimeRange } from "./time-range";
 
 type DashboardTab = "robot" | "subsystems" | "quality";
+
+interface AppliedSupplyLimitScenario {
+  limits: SupplyCurrentLimitInput[];
+  cachedEstimate: SupplyLimitEstimate | null;
+  cachedDataset: AnalysisResult["dataset"] | null;
+  cachedRange: TimeRange | null;
+}
 
 const TABS = [
   { value: "robot", label: "整机", Icon: Bot },
@@ -44,6 +76,16 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const [transientCursorUs, setTransientCursorUs] = useState<number | null>(null);
   const [focus, setFocus] = useState<TimelineFocus>(null);
   const [hiddenSubsystemIds, setHiddenSubsystemIds] = useState<Set<string>>(() => new Set());
+  const [draftSupplyLimits, setDraftSupplyLimits] = useState<SupplyLimitDraft[]>([]);
+  const [appliedSupplyScenario, setAppliedSupplyScenario] = useState<AppliedSupplyLimitScenario>({
+    limits: [],
+    cachedEstimate: null,
+    cachedDataset: null,
+    cachedRange: null,
+  });
+  const appliedSupplyLimits = appliedSupplyScenario.limits;
+  const [supplyLimitErrors, setSupplyLimitErrors] = useState<SupplyLimitDisplayError[]>([]);
+  const [selectedSupplyTargetId, setSelectedSupplyTargetId] = useState<string | null>(null);
   const previewRangeRef = useRef(previewRange);
   const cursorUsRef = useRef(cursorUs);
   const cursorFrameRef = useRef<number | null>(null);
@@ -54,6 +96,47 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const analysis = useMemo(
     () => analyzeEnergyRange(dataset, committedRange),
     [committedRange, dataset],
+  );
+  const supplyLimitTargets = useMemo(
+    () => buildSupplyLimitTargetOptions(dataset, analysis),
+    [analysis, dataset],
+  );
+  const supplyEstimateState = useMemo(() => {
+    if (appliedSupplyLimits.length === 0) {
+      return { estimate: null, errors: [] as SupplyLimitDisplayError[] };
+    }
+    if (
+      appliedSupplyScenario.cachedEstimate &&
+      appliedSupplyScenario.cachedDataset === dataset &&
+      appliedSupplyScenario.cachedRange?.startUs === committedRange.startUs &&
+      appliedSupplyScenario.cachedRange.endUs === committedRange.endUs
+    ) {
+      return {
+        estimate: appliedSupplyScenario.cachedEstimate,
+        errors: [] as SupplyLimitDisplayError[],
+      };
+    }
+    try {
+      return {
+        estimate: estimateSupplyCurrentLimits(dataset, {
+          limits: appliedSupplyLimits,
+          range: committedRange,
+        }),
+        errors: [] as SupplyLimitDisplayError[],
+      };
+    } catch (error) {
+      if (error instanceof SupplyLimitValidationError) {
+        return { estimate: null, errors: supplyLimitIssuesToDisplay(error.issues) };
+      }
+      return {
+        estimate: null,
+        errors: [{ message: "限流估算失败，请检查当前日志的数据质量。" }],
+      };
+    }
+  }, [appliedSupplyLimits, appliedSupplyScenario, committedRange, dataset]);
+  const hasUnappliedSupplyLimitChanges = useMemo(
+    () => !supplyLimitDraftsMatchInputs(draftSupplyLimits, appliedSupplyLimits),
+    [appliedSupplyLimits, draftSupplyLimits],
   );
 
   useEffect(() => {
@@ -202,6 +285,94 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     });
   }, []);
 
+  const addSupplyLimitTarget = useCallback((nodeId: string) => {
+    setSupplyLimitErrors([]);
+    setDraftSupplyLimits((current) => current.some((draft) => draft.nodeId === nodeId)
+      ? current
+      : [...current, {
+          nodeId,
+          enabled: true,
+          limitText: "",
+          aggregateConfirmed: false,
+        }]);
+    setSelectedSupplyTargetId((current) => current ?? nodeId);
+  }, []);
+
+  const updateSupplyLimitDraft = useCallback((nodeId: string, patch: SupplyLimitDraftPatch) => {
+    setSupplyLimitErrors([]);
+    setDraftSupplyLimits((current) => current.map((draft) =>
+      draft.nodeId === nodeId ? { ...draft, ...patch } : draft));
+  }, []);
+
+  const removeSupplyLimitTarget = useCallback((nodeId: string) => {
+    setSupplyLimitErrors([]);
+    setDraftSupplyLimits((current) => current.filter((draft) => draft.nodeId !== nodeId));
+  }, []);
+
+  const applySupplyLimitScenario = useCallback(() => {
+    const parsed = supplyLimitDraftsToInputs(draftSupplyLimits);
+    if (parsed.errors.length > 0) {
+      setSupplyLimitErrors(parsed.errors);
+      return;
+    }
+    const validationIssues = validateSupplyCurrentLimits(dataset, parsed.inputs);
+    if (validationIssues.length > 0) {
+      setSupplyLimitErrors(supplyLimitIssuesToDisplay(validationIssues));
+      return;
+    }
+
+    let estimate: SupplyLimitEstimate;
+    try {
+      estimate = estimateSupplyCurrentLimits(dataset, {
+        limits: parsed.inputs,
+        range: committedRange,
+      });
+    } catch (error) {
+      if (error instanceof SupplyLimitValidationError) {
+        setSupplyLimitErrors(supplyLimitIssuesToDisplay(error.issues));
+      } else {
+        setSupplyLimitErrors([{
+          message: "新方案估算失败，已保留上一次成功应用的方案。",
+        }]);
+      }
+      return;
+    }
+
+    setAppliedSupplyScenario({
+      limits: parsed.inputs,
+      cachedEstimate: estimate,
+      cachedDataset: dataset,
+      cachedRange: { ...committedRange },
+    });
+    setDraftSupplyLimits(normalizeAppliedSupplyLimitDrafts(draftSupplyLimits, parsed.inputs));
+    setSupplyLimitErrors([]);
+    setSelectedSupplyTargetId((current) =>
+      parsed.inputs.some((input) => input.nodeId === current)
+        ? current
+        : parsed.inputs[0]?.nodeId ?? null);
+  }, [committedRange, dataset, draftSupplyLimits]);
+
+  const revertSupplyLimitDrafts = useCallback(() => {
+    setDraftSupplyLimits(supplyLimitInputsToDrafts(appliedSupplyLimits));
+    setSupplyLimitErrors([]);
+    setSelectedSupplyTargetId((current) =>
+      appliedSupplyLimits.some((input) => input.nodeId === current)
+        ? current
+        : appliedSupplyLimits[0]?.nodeId ?? null);
+  }, [appliedSupplyLimits]);
+
+  const clearSupplyLimitScenario = useCallback(() => {
+    setDraftSupplyLimits([]);
+    setAppliedSupplyScenario({
+      limits: [],
+      cachedEstimate: null,
+      cachedDataset: null,
+      cachedRange: null,
+    });
+    setSupplyLimitErrors([]);
+    setSelectedSupplyTargetId(null);
+  }, []);
+
   return (
     <div className="-mx-2.5 -mt-2.5">
       <header className="border-b border-line bg-surface">
@@ -269,6 +440,35 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
             className="grid gap-2.5"
           >
             <SubsystemShare dataset={dataset} analysis={analysis} />
+            <SupplyLimitSimulator
+              targets={supplyLimitTargets}
+              draftLimits={draftSupplyLimits}
+              appliedLimits={appliedSupplyLimits}
+              errors={supplyLimitErrors}
+              estimateErrors={supplyEstimateState.errors}
+              estimate={supplyEstimateState.estimate}
+              selectedTargetId={selectedSupplyTargetId}
+              hasUnappliedChanges={hasUnappliedSupplyLimitChanges}
+              onAddTarget={addSupplyLimitTarget}
+              onUpdateDraft={updateSupplyLimitDraft}
+              onRemoveTarget={removeSupplyLimitTarget}
+              onApply={applySupplyLimitScenario}
+              onRevert={revertSupplyLimitDrafts}
+              onClear={clearSupplyLimitScenario}
+              onSelectTarget={setSelectedSupplyTargetId}
+            />
+            {supplyEstimateState.estimate ? (
+              <SupplyLimitTimeline
+                dataset={dataset}
+                estimate={supplyEstimateState.estimate}
+                selectedTargetId={selectedSupplyTargetId}
+                range={previewRange}
+                cursorUs={displayedCursorUs}
+                cursorPreviewActive={transientCursorUs !== null}
+                onCursorPreview={previewCursor}
+                onCursorCommit={commitCursorNow}
+              />
+            ) : null}
             <SubsystemTimelines
               dataset={dataset}
               range={previewRange}

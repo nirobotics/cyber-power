@@ -211,6 +211,118 @@ export interface RangeAnalysis {
   quality: DataQuality;
 }
 
+export interface SupplyCurrentLimitInput {
+  nodeId: string;
+  limitA: number;
+  aggregateConfirmed?: boolean;
+  enabled?: boolean;
+}
+
+export type SupplyLimitNodeKind = "terminal" | "confirmed-aggregate";
+
+export interface SupplyLimitMetricSnapshot {
+  energyWh: number;
+  averagePowerW: number;
+  peakPowerW: number;
+  peakPowerTimestampUs: number;
+  peakCurrentA: number;
+  peakCurrentTimestampUs: number;
+}
+
+export type SupplyLimitWarningCode =
+  | "NO_ACTIVE_LIMITS"
+  | "LIMIT_NOT_TRIGGERED"
+  | "THEORETICAL_SHUTDOWN"
+  | "CONFIRMED_AGGREGATE"
+  | "SOURCE_ENERGY_RESET"
+  | "SOURCE_NONFINITE_DROPPED"
+  | "SOURCE_TIME_GAP"
+  | "SOURCE_PARTIAL_SUBSERIES"
+  | "SOURCE_NEGATIVE_VALUE"
+  | "SOURCE_CURRENT_MISMATCH"
+  | "SOURCE_RECONCILIATION_MISMATCH"
+  | "ROBOT_ESTIMATE_UNAVAILABLE";
+
+export interface SupplyLimitWarning {
+  code: SupplyLimitWarningCode;
+  message: string;
+  nodeId?: string;
+  details?: Record<string, unknown>;
+}
+
+export type SupplyLimitValidationCode =
+  | "UNKNOWN_NODE"
+  | "INVALID_LIMIT"
+  | "DUPLICATE_TARGET"
+  | "AGGREGATE_CONFIRMATION_REQUIRED"
+  | "HIERARCHY_CONFLICT"
+  | "INVALID_RANGE";
+
+export interface SupplyLimitValidationIssue {
+  code: SupplyLimitValidationCode;
+  message: string;
+  inputIndex?: number;
+  nodeIds?: string[];
+}
+
+export interface SupplyLimitTargetEstimate {
+  nodeId: string;
+  rawPath: string;
+  displayName: string;
+  kind: SupplyLimitNodeKind;
+  limitA: number;
+  baseline: SupplyLimitMetricSnapshot;
+  estimated: SupplyLimitMetricSnapshot;
+  energySavedWh: number;
+  energySavedPercent: number | null;
+  clippedDurationSeconds: number;
+  clippedRangeFraction: number;
+  ampSecondsRemoved: number;
+  warnings: SupplyLimitWarning[];
+}
+
+export interface SupplyLimitTotals {
+  activeTargetCount: number;
+  baseline: SupplyLimitMetricSnapshot;
+  estimated?: SupplyLimitMetricSnapshot;
+  energySavedWh: number;
+  energySavedPercent: number | null;
+  clippedUnionDurationSeconds: number;
+  clippedDurationSumSeconds: number;
+  robotEstimateAvailable: boolean;
+}
+
+export interface SupplyLimitTargetTimeline {
+  nodeId: string;
+  observedCurrentA: Float64Array;
+  estimatedCurrentA: Float64Array;
+}
+
+export interface SupplyLimitTimeline {
+  timestampsUs: Float64Array;
+  observedTotalCurrentA: Float64Array;
+  estimatedTotalCurrentA?: Float64Array;
+  observedTotalPowerW: Float64Array;
+  estimatedTotalPowerW?: Float64Array;
+  observedTotalEnergyWh: Float64Array;
+  estimatedTotalEnergyWh?: Float64Array;
+  targets: SupplyLimitTargetTimeline[];
+}
+
+export interface SupplyLimitEstimate {
+  range: TimeRange & { durationSeconds: number };
+  limits: SupplyCurrentLimitInput[];
+  targets: SupplyLimitTargetEstimate[];
+  totals: SupplyLimitTotals;
+  timeline: SupplyLimitTimeline;
+  warnings: SupplyLimitWarning[];
+}
+
+export interface SupplyLimitEstimateOptions {
+  limits: readonly SupplyCurrentLimitInput[];
+  range?: Partial<TimeRange>;
+}
+
 export interface AnalysisResult {
   dataset: EnergyLogDataset;
   range: RangeAnalysis;
