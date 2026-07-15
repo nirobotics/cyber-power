@@ -90,7 +90,7 @@ export function SubsystemTable({
   return (
     <section id="subsystem-details" className="card overflow-hidden">
       <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold text-ink">功耗明细</h2>
+        <h2 className="text-sm font-semibold text-ink">明细</h2>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[1080px] text-left text-xs">

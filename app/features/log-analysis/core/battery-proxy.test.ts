@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { analyzeBatteryLoadResponse } from "./battery-proxy";
+import {
+  analyzeBatteryLoadResponse,
+  binBatteryLoadObservedCurve,
+} from "./battery-proxy";
+import type { BatteryLoadObservedCurve } from "./battery-proxy";
 import type {
   BooleanSeries,
   EnergyLogDataset,
@@ -21,6 +25,29 @@ function numericSeries(
     values: Float64Array.from(values),
     unit,
     entryName,
+  };
+}
+
+function observedCurve(
+  currentA: readonly number[],
+  voltageV: readonly number[],
+  durationSeconds: readonly number[],
+): BatteryLoadObservedCurve {
+  const finiteCurrent = currentA.filter(Number.isFinite);
+  const finiteVoltage = voltageV.filter((value) => Number.isFinite(value) && value > 0);
+  return {
+    timestampsUs: Float64Array.from(currentA, (_, index) => index * SECOND),
+    registeredCurrentA: Float64Array.from(currentA),
+    voltageV: Float64Array.from(voltageV),
+    intervalDurationSeconds: Float64Array.from(durationSeconds),
+    registeredCurrentRangeA: {
+      minimum: finiteCurrent.length > 0 ? Math.min(...finiteCurrent) : Number.NaN,
+      maximum: finiteCurrent.length > 0 ? Math.max(...finiteCurrent) : Number.NaN,
+    },
+    voltageRangeV: {
+      minimum: finiteVoltage.length > 0 ? Math.min(...finiteVoltage) : Number.NaN,
+      maximum: finiteVoltage.length > 0 ? Math.max(...finiteVoltage) : Number.NaN,
+    },
   };
 }
 
@@ -527,6 +554,167 @@ describe("registered motor load and battery voltage proxies", () => {
     expect(analyzeBatteryLoadResponse(base)).toMatchObject({
       status: "unavailable",
       reason: "NO_COMPLETE_INTERVALS",
+    });
+  });
+});
+
+describe("binBatteryLoadObservedCurve", () => {
+  it("uses interval duration for the voltage quartiles", () => {
+    const distribution = binBatteryLoadObservedCurve(
+      observedCurve([5, 5, 5, 5], [8, 10, 12, 14], [1, 5, 1, 3]),
+      { currentBinWidthA: 20 },
+    );
+
+    expect(distribution.totalObservedDurationSeconds).toBe(10);
+    expect(distribution.validObservationSegmentCount).toBe(4);
+    expect(distribution.bins).toHaveLength(1);
+    expect(distribution.bins[0]).toMatchObject({
+      voltageP25V: 10,
+      voltageMedianV: 10,
+      voltageP75V: 14,
+      observedDurationSeconds: 10,
+      observationSegmentCount: 4,
+    });
+  });
+
+  it("anchors bins at zero and preserves signed current at exact boundaries", () => {
+    const distribution = binBatteryLoadObservedCurve(
+      observedCurve(
+        [-20, -0.1, 0, 0.1, 20],
+        [12, 12, 12, 12, 12],
+        [1, 1, 1, 1, 1],
+      ),
+      { currentBinWidthA: 20 },
+    );
+
+    expect(distribution).toMatchObject({
+      binWidthA: 20,
+      axisMinimumA: -20,
+      axisMaximumA: 40,
+      totalObservedDurationSeconds: 5,
+      validObservationSegmentCount: 5,
+    });
+    expect(distribution.bins.map((bin) => [
+      bin.currentMinimumA,
+      bin.currentMaximumA,
+      bin.observationSegmentCount,
+    ])).toEqual([
+      [-20, 0, 2],
+      [0, 20, 2],
+      [20, 40, 1],
+    ]);
+    expect(
+      distribution.bins.some((bin) => bin.currentMinimumA < 0 && bin.currentMaximumA > 0),
+    ).toBe(false);
+  });
+
+  it("retains empty current bins so the trend can render gaps", () => {
+    const distribution = binBatteryLoadObservedCurve(
+      observedCurve([5, 65], [12, 9], [2, 3]),
+      { currentBinWidthA: 20 },
+    );
+
+    expect(distribution.bins.map((bin) => [bin.currentMinimumA, bin.currentMaximumA])).toEqual([
+      [0, 20],
+      [20, 40],
+      [40, 60],
+      [60, 80],
+    ]);
+    for (const emptyBin of distribution.bins.slice(1, 3)) {
+      expect(emptyBin.observedDurationSeconds).toBe(0);
+      expect(emptyBin.observationSegmentCount).toBe(0);
+      expect(emptyBin.voltageP25V).toBeNaN();
+      expect(emptyBin.voltageMedianV).toBeNaN();
+      expect(emptyBin.voltageP75V).toBeNaN();
+    }
+  });
+
+  it("drops invalid observations and only reads the common array length", () => {
+    const distribution = binBatteryLoadObservedCurve(observedCurve(
+      [5, Number.NaN, Number.POSITIVE_INFINITY, 20, 25, 30, 35, 40, 45, 50, 55],
+      [12, 11, 10, Number.NaN, Number.POSITIVE_INFINITY, 0, -1, 8, 7, 6, 5, 4],
+      [1, 1, 1, 1, 1, 1, 1, Number.NaN, 0, -1],
+    ));
+
+    expect(distribution).toMatchObject({
+      totalObservedDurationSeconds: 1,
+      validObservationSegmentCount: 1,
+    });
+    expect(distribution.bins).toHaveLength(1);
+    expect(distribution.bins[0]).toMatchObject({
+      voltageP25V: 12,
+      voltageMedianV: 12,
+      voltageP75V: 12,
+      observedDurationSeconds: 1,
+      observationSegmentCount: 1,
+    });
+
+    expect(binBatteryLoadObservedCurve(observedCurve(
+      [Number.NaN, 5],
+      [12, 0],
+      [1, 1],
+    ))).toEqual({
+      binWidthA: 0,
+      axisMinimumA: 0,
+      axisMaximumA: 0,
+      totalObservedDurationSeconds: 0,
+      validObservationSegmentCount: 0,
+      bins: [],
+    });
+  });
+
+  it("selects a 20 A nice width for the real observed current range", () => {
+    const distribution = binBatteryLoadObservedCurve(observedCurve(
+      [-182.2, 473.2],
+      [12.96, 5.66],
+      [1, 1],
+    ));
+
+    expect(distribution.binWidthA).toBe(20);
+    expect(distribution.bins).toHaveLength(34);
+    expect(distribution.bins.length).toBeLessThanOrEqual(40);
+    expect(distribution.axisMinimumA).toBe(-200);
+    expect(distribution.axisMaximumA).toBe(480);
+  });
+
+  it("keeps a narrow nonzero current range within the maximum bin count", () => {
+    const distribution = binBatteryLoadObservedCurve(observedCurve(
+      [5, 7],
+      [12, 11.8],
+      [1, 1],
+    ));
+
+    expect(distribution.binWidthA).toBeGreaterThan(0);
+    expect(distribution.bins.length).toBeGreaterThan(0);
+    expect(distribution.bins.length).toBeLessThanOrEqual(40);
+    expect(distribution.axisMinimumA).toBeLessThanOrEqual(5);
+    expect(distribution.axisMaximumA).toBeGreaterThan(7);
+  });
+
+  it("returns one finite bin for a single observed current", () => {
+    const distribution = binBatteryLoadObservedCurve(observedCurve(
+      [7],
+      [12.1],
+      [3],
+    ));
+
+    expect(distribution).toMatchObject({
+      binWidthA: 1,
+      axisMinimumA: 7,
+      axisMaximumA: 8,
+      totalObservedDurationSeconds: 3,
+      validObservationSegmentCount: 1,
+    });
+    expect(distribution.bins).toHaveLength(1);
+    expect(distribution.bins[0]).toEqual({
+      currentMinimumA: 7,
+      currentMaximumA: 8,
+      currentCenterA: 7.5,
+      voltageP25V: 12.1,
+      voltageMedianV: 12.1,
+      voltageP75V: 12.1,
+      observedDurationSeconds: 3,
+      observationSegmentCount: 1,
     });
   });
 });

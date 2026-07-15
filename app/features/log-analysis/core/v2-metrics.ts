@@ -7,6 +7,7 @@ import {
   type MotorTelemetrySeries,
 } from "./motor-models";
 import { upperBound } from "./time-series";
+import type { EnergyLoggerV2MotorType } from "./v2-contract";
 import type {
   EnergyLogDataset,
   EnergyLogV2Dataset,
@@ -167,6 +168,24 @@ export interface DerivedEnergyLoggerV2Core {
   subsystems: SubsystemNode[];
 }
 
+export interface EnergyLoggerV2MotorGroupElectricalSeries {
+  readonly id: string;
+  readonly subsystemId: string;
+  readonly subsystemName: string;
+  readonly leaderName: string;
+  readonly motorNames: readonly string[];
+  readonly motorType: EnergyLoggerV2MotorType;
+  readonly motorCount: number;
+  readonly currentA: NumericSeries;
+  readonly powerW: NumericSeries;
+  readonly energyWh: NumericSeries;
+}
+
+const motorGroupElectricalSeriesCache = new WeakMap<
+  EnergyLogDataset,
+  readonly EnergyLoggerV2MotorGroupElectricalSeries[]
+>();
+
 /** Converts a supported fixed V2 transport into the same canonical electrical series used by v1 UI. */
 export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyLoggerV2Core {
   const robotRows = monotonicSampleRows(
@@ -292,6 +311,62 @@ export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyL
   };
 }
 
+/**
+ * Derives one electrical series per Manifest leader group. Followers contribute
+ * their Supply Current to their leader and never become independent targets.
+ */
+export function deriveEnergyLoggerV2MotorGroupElectricalSeries(
+  dataset: EnergyLogDataset,
+): readonly EnergyLoggerV2MotorGroupElectricalSeries[] | undefined {
+  if (!dataset.v2) return undefined;
+  const cached = motorGroupElectricalSeriesCache.get(dataset);
+  if (cached) return cached;
+
+  const range = {
+    startUs: dataset.bounds.energyStartUs,
+    endUs: dataset.bounds.energyEndUs,
+  };
+  const groups: EnergyLoggerV2MotorGroupElectricalSeries[] = [];
+  for (const subsystem of dataset.v2.subsystems) {
+    const aligned = alignSubsystem(subsystem);
+    subsystem.motors.forEach((leader, leaderIndex) => {
+      if (leader.leader !== null) return;
+      const motorIndices = subsystem.motors.flatMap((motor, motorIndex) =>
+        motorIndex === leaderIndex || motor.leader === leader.name ? [motorIndex] : [],
+      );
+      const extracted = groupTelemetry(
+        dataset,
+        subsystem,
+        aligned,
+        motorIndices,
+        leaderIndex,
+        range,
+      );
+      const derived = electricalSeries(
+        `${subsystem.sampleTimestampUs.entryName}/groups/${leader.name}`,
+        extracted.telemetry.timestampsUs,
+        extracted.telemetry.supplyCurrentA,
+        extracted.telemetry.batteryVoltageV,
+      );
+      groups.push({
+        id: `${subsystem.id}/${leader.name}`,
+        subsystemId: subsystem.id,
+        subsystemName: subsystem.name,
+        leaderName: leader.name,
+        motorNames: motorIndices.map((index) => subsystem.motors[index].name),
+        motorType: leader.type,
+        motorCount: motorIndices.length,
+        currentA: derived.currentA,
+        powerW: derived.powerW,
+        energyWh: derived.energyWh,
+      });
+    });
+  }
+  groups.sort((left, right) => left.id.localeCompare(right.id));
+  motorGroupElectricalSeriesCache.set(dataset, groups);
+  return groups;
+}
+
 export interface EnergyLoggerV2MetricSnapshot {
   readonly energyWh: number;
   readonly averagePowerW: number;
@@ -310,7 +385,7 @@ export interface EnergyLoggerV2MotorGroupMetrics {
   readonly id: string;
   readonly leaderName: string;
   readonly motorNames: readonly string[];
-  readonly motorType: string;
+  readonly motorType: EnergyLoggerV2MotorType;
   readonly motorCount: number;
   readonly analysisReduction: number;
   readonly coverage: MotorCoverageTimeline;
@@ -424,7 +499,16 @@ function groupTelemetry(
   motorIndices: readonly number[],
   leaderIndex: number,
   range: TimeRange,
-): { telemetry: MotorTelemetrySeries; stateIds: Int32Array } {
+): {
+  telemetry: MotorTelemetrySeries & {
+    timestampsUs: Float64Array;
+    supplyCurrentA: Float64Array;
+    batteryVoltageV: Float64Array;
+    statorCurrentA: Float64Array;
+    rotorVelocityRadPerSec: Float64Array;
+  };
+  stateIds: Int32Array;
+} {
   const subsystemTimestamps: number[] = [range.startUs];
   for (const timestampUs of aligned.timestampsUs) {
     if (timestampUs > range.startUs && timestampUs < range.endUs) {

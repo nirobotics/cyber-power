@@ -1,10 +1,13 @@
 export { LogAnalysisError } from "./errors";
 export { analyzeEnergyRange, analyzeWpiLog, parseEnergyLog } from "./energy-analysis";
-export { analyzeBatteryLoadResponse } from "./battery-proxy";
+export { analyzeBatteryLoadResponse, binBatteryLoadObservedCurve } from "./battery-proxy";
 export type {
   BatteryLoadLocalWindows,
   BatteryLoadObservedBrownoutEvents,
   BatteryLoadObservedCurve,
+  BatteryLoadObservedDistribution,
+  BatteryLoadObservedDistributionBin,
+  BatteryLoadObservedDistributionOptions,
   BatteryLoadObservedLowVoltage,
   BatteryLoadResponseAnalysis,
   BatteryLoadResponseOptions,
@@ -27,8 +30,12 @@ export type {
   MotorTelemetryDiagnostics,
   MotorTelemetrySeries,
 } from "./motor-models";
-export { analyzeEnergyLoggerV2Range } from "./v2-metrics";
+export {
+  analyzeEnergyLoggerV2Range,
+  deriveEnergyLoggerV2MotorGroupElectricalSeries,
+} from "./v2-metrics";
 export type {
+  EnergyLoggerV2MotorGroupElectricalSeries,
   EnergyLoggerV2MotorGroupMetrics,
   EnergyLoggerV2RangeAnalysis,
   EnergyLoggerV2StateMetrics,
@@ -39,6 +46,7 @@ export type {
   EnergyLoggerV2MotorDescriptor,
 } from "./v2-contract";
 export {
+  analyzeSupplyLimitMotorGroups,
   estimateSupplyCurrentLimits,
   SupplyLimitValidationError,
   validateSupplyCurrentLimits,
@@ -68,6 +76,7 @@ export type {
   SubsystemRangeMetrics,
   SupplyCurrentLimitInput,
   SupplyLimitEstimate,
+  SupplyLimitMotorGroupMetrics,
   SupplyLimitValidationIssue,
   TimeInterval,
   TimeRange,

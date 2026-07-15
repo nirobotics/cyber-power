@@ -1,12 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import type { BatteryLoadResponseAnalysis } from "../log-analysis/core/battery-proxy";
+import {
+  binBatteryLoadObservedCurve,
+  type BatteryLoadResponseAnalysis,
+} from "../log-analysis/core/battery-proxy";
 import type { EnergyLogDataset, NumericSeries } from "../log-analysis/core/types";
 import {
   BatteryAnalysisSection,
   componentUnavailableReason,
   createLocalWindowTimelineOption,
-  observedCurveSvgPoints,
+  createObservedVoltageCurrentDistributionOption,
+  formatObservedVoltageCurrentBinTooltip,
+  sampleObservedVoltageCurrentPoints,
   topLevelUnavailableReason,
 } from "./battery-analysis-section";
 
@@ -207,19 +212,19 @@ function renderAnalysis(analysis: BatteryLoadResponseAnalysis) {
 }
 
 describe("BatteryAnalysisSection", () => {
-  it("renders the complete registered-motor battery observation story", () => {
+  it("renders the complete whole-robot battery observation story", () => {
     const html = renderAnalysis(availableAnalysis());
 
-    expect(html).toContain("电池与已注册电机输入摘要");
+    expect(html).toContain("电池与整机输入摘要");
     expect(html).toContain("平均电池电压");
     expect(html).toContain("11.20 V");
-    expect(html).toContain("已注册电机正向输入能量");
+    expect(html).toContain("整机正向输入能量");
     expect(html).toContain("1.2345 Wh");
-    expect(html).toContain("已注册电机正向输入电量");
+    expect(html).toContain("整机正向输入电量");
     expect(html).toContain("0.1111 Ah");
-    expect(html).toContain("峰值正向已注册电机电流");
+    expect(html).toContain("整机峰值正向电流");
     expect(html).toContain("210.0 A");
-    expect(html).toContain("已注册电机电流 I²t");
+    expect(html).toContain("整机电流 I²t");
     expect(html).toContain("98,765.4 A²·s");
 
     expect(html).toContain("局部电压响应");
@@ -229,27 +234,25 @@ describe("BatteryAnalysisSection", () => {
     expect(html).toContain("50.00–80.00 mV");
     expect(html).toContain('aria-label="局部窗口等效压降代理与 RMSE 时序图"');
 
-    expect(html).toContain("观测范围内的电压－已注册电机电流关系");
-    expect(html).toContain('aria-label="观测范围内电池电压与已注册电机电流关系曲线"');
-    expect(html).toContain("pointer-events-none");
-    expect(html).toContain('preserveAspectRatio="xMidYMid meet"');
-    expect(html).toContain("h-auto w-full max-w-[720px]");
-    expect(html).toContain("负载阶跃");
-    expect(html).toContain("50.00");
-    expect(html).toContain("16.00");
-    expect(html).toContain("Robot Mode 条件统计");
-    expect(html).toContain("AUTO");
-    expect(html).toContain("TELEOP");
-    expect(html).toContain("重叠 Brownout 事件 / 时长");
-    expect(html).toContain("各模式事件数不可相加为总数");
+    expect(html).toContain("整机电压与电流关系");
+    expect(html).toContain('aria-label="整机电压与电流观测分布图"');
+    expect(html).toContain('aria-pressed="false"');
+    expect(html).toContain("显示原始点");
+    expect(html).toContain("取电中位数");
+    expect(html).toContain("回流中位数");
+    expect(html).toContain("P25–P75");
+    expect(html).toContain("观测时长");
+    expect(html).toContain("Brownout 电压 6.50 V");
+    expect(html).not.toContain("按持续时间加权的电压中位数");
+    expect(html).not.toContain("不代表恒定电池模型");
+    expect(html).not.toContain("Brownout Voltage");
     expect(html).toContain("实际低压与 Brownout");
-    expect(html).toContain("核心限制说明");
-    expect(html).toContain("不是整机总电流");
-    expect(html).toContain("不估算电池 SOC 或容量");
-    expect(html).toContain("不是纯内阻");
-    expect(html).toContain("不提供配置变更后的电压、Brownout 或节能反事实");
+    expect(html).toContain("相对 Brownout 电压的实际低压");
     expect(html).not.toContain("内阻估算");
-    expect(html).not.toContain("整机总电流：");
+    expect(html).not.toContain("已注册电机");
+    expect(html).not.toContain("负载阶跃");
+    expect(html).not.toContain("Robot Mode 条件统计");
+    expect(html).not.toContain("限制说明");
   });
 
   it("labels a positive-current peak precisely for negative-only observations", () => {
@@ -261,65 +264,20 @@ describe("BatteryAnalysisSection", () => {
       maximumRegisteredCurrentA: -5,
       maximumPositiveRegisteredCurrentA: 0,
     };
-    const autonomous = base.modeStats.autonomous;
-    if (!autonomous) throw new Error("fixture mismatch");
     const html = renderAnalysis({
       ...base,
       summary: negativeSummary,
-      modeStats: {
-        autonomous: {
-          ...autonomous,
-          summary: { ...negativeSummary, coveredDurationSeconds: 5 },
-        },
-      },
     });
 
-    expect(html.match(/峰值正向已注册电机电流/g)).toHaveLength(2);
+    expect(html.match(/整机峰值正向电流/g)).toHaveLength(1);
     expect(html).toContain("0.0 A");
-    expect(html).not.toContain("峰值已注册电机电流");
-  });
-
-  it("limits the load-step DOM and reports displayed and total rows", () => {
-    const base = availableAnalysis();
-    if (base.stepResponse.status !== "available") throw new Error("fixture mismatch");
-    const rowCount = 205;
-    const html = renderAnalysis({
-      ...base,
-      stepResponse: {
-        ...base.stepResponse,
-        candidateCount: rowCount,
-        independentCount: rowCount,
-        inverseVoltageCount: rowCount,
-        rejectedDirectionCount: 0,
-        risingStepCount: rowCount,
-        fallingStepCount: 0,
-        timestampsUs: Float64Array.from(
-          { length: rowCount },
-          (_, index) => (index + 1) * 1_000_000,
-        ),
-        deltaRegisteredCurrentA: new Float64Array(rowCount).fill(40),
-        deltaVoltageV: new Float64Array(rowCount).fill(-0.4),
-        voltageDropProxyOhm: new Float64Array(rowCount).fill(0.01),
-      },
-    });
-
-    expect(html).toContain("表格按时间顺序显示前 200 / 共 205 条有效阶跃");
-    expect(html).toContain("200.000 s");
-    expect(html).not.toContain("201.000 s");
+    expect(html).not.toContain("整机峰值电流");
   });
 
   it("degrades each optional analysis independently", () => {
     const base = availableAnalysis();
     const analysis: Extract<BatteryLoadResponseAnalysis, { status: "available" }> = {
       ...base,
-      stepResponse: {
-        status: "unavailable",
-        reason: "NO_INVERSE_VOLTAGE_STEPS",
-        candidateCount: 2,
-        independentCount: 2,
-        inverseVoltageCount: 1,
-        rejectedDirectionCount: 1,
-      },
       localWindows: {
         status: "unavailable",
         reason: "NO_INVERSE_VOLTAGE_WINDOWS",
@@ -327,16 +285,13 @@ describe("BatteryAnalysisSection", () => {
         weakExcitationWindowCount: 1,
         rejectedDirectionWindowCount: 2,
       },
-      modeStats: {},
       lowVoltage: { status: "unavailable", reason: "BROWNOUT_VOLTAGE_UNAVAILABLE" },
       brownoutEvents: { status: "unavailable", reason: "BROWNOUT_SIGNAL_UNAVAILABLE" },
     };
     const html = renderAnalysis(analysis);
 
-    expect(html).toContain("没有足够的电流与电压反向变化窗口");
     expect(html).toContain("局部窗口没有稳定的电流与电压反向变化关系");
-    expect(html).toContain("当前范围没有可用的 Robot Mode 条件区间");
-    expect(html).toContain("日志没有可用的 Brownout Voltage 序列");
+    expect(html).toContain("日志没有可用的 Brownout 电压序列");
     expect(html).toContain("日志没有可用的 Brownout 状态序列");
     expect(html).not.toContain('aria-label="局部窗口等效压降代理与 RMSE 时序图"');
   });
@@ -349,11 +304,10 @@ describe("BatteryAnalysisSection", () => {
     });
 
     expect(html).toContain("电池观测分析不可用");
-    expect(html).toContain("需要包含已注册电机数据的 EnergyLogger V2 日志");
-    expect(html).toContain("日志契约不兼容");
-    expect(html).toContain("不是整机总电流");
-    expect(topLevelUnavailableReason("NO_COMPLETE_INTERVALS")).toContain("没有完整的电压");
-    expect(componentUnavailableReason("WEAK_CURRENT_EXCITATION")).toContain("电流变化范围不足");
+    expect(html).toContain("需要包含整机电机数据的 EnergyLogger V2 日志");
+    expect(html).not.toContain("日志契约不兼容");
+    expect(topLevelUnavailableReason("NO_COMPLETE_INTERVALS")).toContain("整机电流");
+    expect(componentUnavailableReason("WEAK_CURRENT_EXCITATION")).toContain("整机电流变化范围不足");
   });
 });
 
@@ -397,39 +351,135 @@ describe("battery observation charts", () => {
     expect(option.series[0].markArea?.data).toHaveLength(3);
   });
 
-  it("creates a bounded presentation path without changing the observed values", () => {
+  it("builds the voltage-current distribution with fixed voltage bounds and reference lines", () => {
     const curve = availableAnalysis().observedCurve;
-    const points = observedCurveSvgPoints(curve);
+    const distribution = binBatteryLoadObservedCurve(curve, { currentBinWidthA: 50 });
+    const option = createObservedVoltageCurrentDistributionOption(
+      curve,
+      distribution,
+      "dark",
+      6.5,
+      false,
+    ) as {
+      dataZoom?: unknown;
+      xAxis: Array<{ min?: number; max?: number }>;
+      yAxis: Array<{ min?: number; max?: number }>;
+      series: Array<{
+        id?: string;
+        name?: string;
+        type?: string;
+        xAxisIndex?: number;
+        yAxisIndex?: number;
+        stack?: string;
+        symbol?: string;
+        connectNulls?: boolean;
+        data?: unknown[];
+        endLabel?: unknown;
+        lineStyle?: { opacity?: number; width?: number };
+      }>;
+    };
+    const seriesById = Object.fromEntries(option.series.map((series) => [series.id, series]));
 
-    expect(points).toBe("58.00,20.00 236.33,52.30 700.00,238.00 129.33,40.19");
-    expect(observedCurveSvgPoints({
-      ...curve,
-      registeredCurrentA: new Float64Array(),
-      voltageV: new Float64Array(),
-    })).toBeNull();
+    expect(option.dataZoom).toBeUndefined();
+    expect(option.xAxis[0]).toMatchObject({ min: 0, max: 200 });
+    expect(option.xAxis[1]).toMatchObject({ min: 0, max: 200 });
+    expect(option.yAxis[0]).toMatchObject({ min: 3, max: 13.5 });
+    expect(seriesById["observed-zero-current"]?.data).toEqual([[0, 3], [0, 13.5]]);
+    expect(seriesById["observed-brownout-voltage"]).toMatchObject({
+      name: "Brownout 电压",
+      data: [[0, 6.5], [200, 6.5]],
+    });
+    expect(seriesById["observed-brownout-voltage"]?.endLabel).toBeUndefined();
+    expect(seriesById["observed-positive-iqr"]).toMatchObject({
+      type: "line",
+      stack: "observed-positive-iqr",
+      connectNulls: false,
+    });
+    expect(seriesById["observed-positive-median"]).toMatchObject({
+      type: "line",
+      symbol: "circle",
+      connectNulls: false,
+    });
+    expect(seriesById["observed-negative-median"]).toMatchObject({
+      type: "line",
+      symbol: "emptyCircle",
+      connectNulls: false,
+    });
+    expect(seriesById["observed-duration"]).toMatchObject({
+      type: "bar",
+      xAxisIndex: 1,
+      yAxisIndex: 1,
+    });
+    expect(seriesById["observed-positive-raw"]).toBeUndefined();
+    expect(seriesById["observed-negative-raw"]).toBeUndefined();
+
+    const optionWithoutThreshold = createObservedVoltageCurrentDistributionOption(
+      curve,
+      distribution,
+      "light",
+      null,
+      false,
+    ) as { series: Array<{ id?: string }> };
+    expect(optionWithoutThreshold.series.some((series) =>
+      series.id === "observed-brownout-voltage"
+    )).toBe(false);
   });
 
-  it("keeps per-bucket current and voltage extrema in chronological order", () => {
-    const count = 801;
-    const current = Float64Array.from({ length: count }, (_, index) => index);
-    const voltage = new Float64Array(count).fill(10);
-    voltage[1] = 0;
-    voltage[3] = 20;
-    const points = observedCurveSvgPoints({
-      timestampsUs: Float64Array.from({ length: count }, (_, index) => index),
-      registeredCurrentA: current,
-      voltageV: voltage,
-      intervalDurationSeconds: new Float64Array(count).fill(1),
-      registeredCurrentRangeA: { minimum: 0, maximum: 800 },
-      voltageRangeV: { minimum: 0, maximum: 20 },
-    });
-    if (!points) throw new Error("expected sampled points");
-    const sampled = points.split(" ");
-    const xCoordinates = sampled.map((point) => Number(point.split(",")[0]));
+  it("adds bounded raw observations without connecting them", () => {
+    const curve = {
+      ...availableAnalysis().observedCurve,
+      timestampsUs: Float64Array.from([0, 1, 2, 3, 4]),
+      registeredCurrentA: Float64Array.from([-10, 0, 50, 100, 150]),
+      voltageV: Float64Array.from([12.8, 12.6, 11.8, 10, 8]),
+      intervalDurationSeconds: new Float64Array(5).fill(1),
+      registeredCurrentRangeA: { minimum: -10, maximum: 150 },
+      voltageRangeV: { minimum: 8, maximum: 12.8 },
+    };
 
-    expect(sampled.length).toBeLessThanOrEqual(800);
-    expect(sampled).toContain("58.80,238.00");
-    expect(sampled).toContain("60.41,20.00");
-    expect(xCoordinates).toEqual([...xCoordinates].sort((left, right) => left - right));
+    expect(sampleObservedVoltageCurrentPoints(curve, 3)).toEqual({
+      negative: [[-10, 12.8]],
+      positive: [[50, 11.8], [150, 8]],
+    });
+    expect(sampleObservedVoltageCurrentPoints(curve, 0)).toEqual({ negative: [], positive: [] });
+
+    const distribution = binBatteryLoadObservedCurve(curve, { currentBinWidthA: 20 });
+    const option = createObservedVoltageCurrentDistributionOption(
+      curve,
+      distribution,
+      "dark",
+      null,
+      true,
+    ) as {
+      series: Array<{
+        id?: string;
+        data?: unknown[];
+        lineStyle?: { opacity?: number; width?: number };
+      }>;
+    };
+    const seriesById = Object.fromEntries(option.series.map((series) => [series.id, series]));
+
+    expect(seriesById["observed-positive-raw"]?.data).toHaveLength(4);
+    expect(seriesById["observed-negative-raw"]?.data).toHaveLength(1);
+    expect(seriesById["observed-positive-raw"]?.lineStyle).toMatchObject({ opacity: 0, width: 0 });
+    expect(seriesById["observed-negative-raw"]?.lineStyle).toMatchObject({ opacity: 0, width: 0 });
+  });
+
+  it("formats a bin tooltip with the interval, weighted voltage, duration, and count", () => {
+    const tooltip = formatObservedVoltageCurrentBinTooltip({
+      currentMinimumA: -20,
+      currentMaximumA: 0,
+      currentCenterA: -10,
+      voltageP25V: 10.1,
+      voltageMedianV: 10.5,
+      voltageP75V: 10.9,
+      observedDurationSeconds: 2.5,
+      observationSegmentCount: 42,
+    });
+
+    expect(tooltip).toContain("整机电流 -20.0 至 &lt; 0.0 A");
+    expect(tooltip).toContain("加权中位电压：10.50 V");
+    expect(tooltip).toContain("P25–P75：10.10–10.90 V");
+    expect(tooltip).toContain("累计观测时长：2.50 s");
+    expect(tooltip).toContain("观测段数：42");
   });
 });

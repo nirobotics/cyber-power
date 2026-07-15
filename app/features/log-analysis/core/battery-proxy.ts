@@ -23,7 +23,7 @@ const MODES = Object.freeze(
 );
 
 const DEFAULT_LIMITATIONS = Object.freeze([
-  "电流只覆盖 EnergyLogger V2 已注册电机。",
+  "电流只覆盖 EnergyLogger V2 记录的整机电机，不包含未接入的负载。",
   "等效压降代理同时包含供电路径、动态电压恢复和未记录负载的影响。",
   "结果只描述所选日志范围内的观测关系，不预测配置变更后的电压或 Brownout。",
 ] as const);
@@ -153,6 +153,31 @@ export interface BatteryLoadObservedCurve {
   readonly intervalDurationSeconds: Float64Array;
   readonly registeredCurrentRangeA: Readonly<{ minimum: number; maximum: number }>;
   readonly voltageRangeV: Readonly<{ minimum: number; maximum: number }>;
+}
+
+export interface BatteryLoadObservedDistributionBin {
+  readonly currentMinimumA: number;
+  readonly currentMaximumA: number;
+  readonly currentCenterA: number;
+  readonly voltageP25V: number;
+  readonly voltageMedianV: number;
+  readonly voltageP75V: number;
+  readonly observedDurationSeconds: number;
+  readonly observationSegmentCount: number;
+}
+
+export interface BatteryLoadObservedDistribution {
+  readonly binWidthA: number;
+  readonly axisMinimumA: number;
+  readonly axisMaximumA: number;
+  readonly totalObservedDurationSeconds: number;
+  readonly validObservationSegmentCount: number;
+  readonly bins: readonly BatteryLoadObservedDistributionBin[];
+}
+
+export interface BatteryLoadObservedDistributionOptions {
+  readonly targetBinCount?: number;
+  readonly currentBinWidthA?: number;
 }
 
 export type BatteryLoadObservedLowVoltage =
@@ -574,6 +599,208 @@ function weightedQuantile(
     if (cumulative >= target) return values[index];
   }
   return values[indices.at(-1)!];
+}
+
+const DEFAULT_OBSERVED_DISTRIBUTION_BIN_COUNT = 32;
+const MINIMUM_OBSERVED_DISTRIBUTION_BIN_COUNT = 24;
+const MAXIMUM_OBSERVED_DISTRIBUTION_BIN_COUNT = 40;
+const NICE_BIN_MULTIPLIERS = [1, 2, 2.5, 5] as const;
+
+interface ObservedDistributionSample {
+  readonly currentA: number;
+  readonly voltageV: number;
+  readonly durationSeconds: number;
+}
+
+interface ObservedDistributionAccumulator {
+  readonly samples: ObservedDistributionSample[];
+  durationSeconds: number;
+}
+
+export function binBatteryLoadObservedCurve(
+  curve: BatteryLoadObservedCurve,
+  options: BatteryLoadObservedDistributionOptions = {},
+): BatteryLoadObservedDistribution {
+  const count = Math.min(
+    curve.registeredCurrentA.length,
+    curve.voltageV.length,
+    curve.intervalDurationSeconds.length,
+  );
+  const samples: ObservedDistributionSample[] = [];
+  let minimumCurrentA = Number.POSITIVE_INFINITY;
+  let maximumCurrentA = Number.NEGATIVE_INFINITY;
+  let totalObservedDurationSeconds = 0;
+  for (let index = 0; index < count; index += 1) {
+    const currentA = curve.registeredCurrentA[index];
+    const voltageV = curve.voltageV[index];
+    const durationSeconds = curve.intervalDurationSeconds[index];
+    if (
+      !Number.isFinite(currentA) ||
+      !Number.isFinite(voltageV) ||
+      !(voltageV > 0) ||
+      !Number.isFinite(durationSeconds) ||
+      !(durationSeconds > 0)
+    ) {
+      continue;
+    }
+    samples.push({ currentA, voltageV, durationSeconds });
+    minimumCurrentA = Math.min(minimumCurrentA, currentA);
+    maximumCurrentA = Math.max(maximumCurrentA, currentA);
+    totalObservedDurationSeconds += durationSeconds;
+  }
+  if (samples.length === 0) {
+    return {
+      binWidthA: 0,
+      axisMinimumA: 0,
+      axisMaximumA: 0,
+      totalObservedDurationSeconds: 0,
+      validObservationSegmentCount: 0,
+      bins: [],
+    };
+  }
+
+  const requestedWidthA = options.currentBinWidthA;
+  const targetBinCount = clampInteger(
+    options.targetBinCount ?? DEFAULT_OBSERVED_DISTRIBUTION_BIN_COUNT,
+    1,
+    MAXIMUM_OBSERVED_DISTRIBUTION_BIN_COUNT,
+  );
+  const binWidthA = Number.isFinite(requestedWidthA) && requestedWidthA! > 0
+    ? requestedWidthA!
+    : chooseObservedDistributionBinWidth(minimumCurrentA, maximumCurrentA, targetBinCount);
+  const firstBinIndex = Math.floor(minimumCurrentA / binWidthA);
+  const lastBinIndex = Math.floor(maximumCurrentA / binWidthA);
+  const binCount = lastBinIndex - firstBinIndex + 1;
+  const axisMinimumA = normalizeFiniteZero(firstBinIndex * binWidthA);
+  const axisMaximumA = normalizeFiniteZero((lastBinIndex + 1) * binWidthA);
+  const accumulators: ObservedDistributionAccumulator[] = Array.from(
+    { length: binCount },
+    () => ({ samples: [], durationSeconds: 0 }),
+  );
+  for (const sample of samples) {
+    const binIndex = Math.max(
+      0,
+      Math.min(binCount - 1, Math.floor(sample.currentA / binWidthA) - firstBinIndex),
+    );
+    const accumulator = accumulators[binIndex];
+    accumulator.samples.push(sample);
+    accumulator.durationSeconds += sample.durationSeconds;
+  }
+
+  const bins = accumulators.map<BatteryLoadObservedDistributionBin>((accumulator, index) => {
+    const currentMinimumA = normalizeFiniteZero((firstBinIndex + index) * binWidthA);
+    const currentMaximumA = normalizeFiniteZero(currentMinimumA + binWidthA);
+    const sortedSamples = [...accumulator.samples].sort(
+      (left, right) => left.voltageV - right.voltageV,
+    );
+    return {
+      currentMinimumA,
+      currentMaximumA,
+      currentCenterA: normalizeFiniteZero(currentMinimumA + binWidthA / 2),
+      voltageP25V: weightedObservedVoltageQuantile(sortedSamples, accumulator.durationSeconds, 0.25),
+      voltageMedianV: weightedObservedVoltageQuantile(sortedSamples, accumulator.durationSeconds, 0.5),
+      voltageP75V: weightedObservedVoltageQuantile(sortedSamples, accumulator.durationSeconds, 0.75),
+      observedDurationSeconds: accumulator.durationSeconds,
+      observationSegmentCount: accumulator.samples.length,
+    };
+  });
+
+  return {
+    binWidthA,
+    axisMinimumA,
+    axisMaximumA,
+    totalObservedDurationSeconds,
+    validObservationSegmentCount: samples.length,
+    bins,
+  };
+}
+
+function chooseObservedDistributionBinWidth(
+  minimumCurrentA: number,
+  maximumCurrentA: number,
+  targetBinCount: number,
+): number {
+  const spanA = maximumCurrentA - minimumCurrentA;
+  if (!(spanA > 0)) {
+    return nearestNicePositiveStep(Math.max(1, Math.abs(minimumCurrentA) / targetBinCount));
+  }
+  const rawWidthA = spanA / targetBinCount;
+  const baseExponent = Math.floor(Math.log10(rawWidthA));
+  let selectedWidthA = Number.NaN;
+  let selectedScore = Number.POSITIVE_INFINITY;
+  for (let exponentOffset = -2; exponentOffset <= 2; exponentOffset += 1) {
+    const scale = 10 ** (baseExponent + exponentOffset);
+    for (const multiplier of NICE_BIN_MULTIPLIERS) {
+      const widthA = multiplier * scale;
+      if (!(widthA > 0) || !Number.isFinite(widthA)) continue;
+      const binCount = observedDistributionBinCount(minimumCurrentA, maximumCurrentA, widthA);
+      if (binCount > MAXIMUM_OBSERVED_DISTRIBUTION_BIN_COUNT) continue;
+      const outsidePreferredRange = binCount < MINIMUM_OBSERVED_DISTRIBUTION_BIN_COUNT;
+      const score = Math.abs(binCount - targetBinCount) + (outsidePreferredRange ? 1_000 : 0);
+      if (
+        score < selectedScore ||
+        (score === selectedScore && widthA < selectedWidthA)
+      ) {
+        selectedWidthA = widthA;
+        selectedScore = score;
+      }
+    }
+  }
+  return Number.isFinite(selectedWidthA) && selectedWidthA > 0
+    ? selectedWidthA
+    : nearestNicePositiveStep(rawWidthA);
+}
+
+function observedDistributionBinCount(
+  minimumCurrentA: number,
+  maximumCurrentA: number,
+  widthA: number,
+): number {
+  return Math.floor(maximumCurrentA / widthA) - Math.floor(minimumCurrentA / widthA) + 1;
+}
+
+function nearestNicePositiveStep(value: number): number {
+  if (!(value > 0) || !Number.isFinite(value)) return 1;
+  const exponent = Math.floor(Math.log10(value));
+  const scale = 10 ** exponent;
+  let selected = NICE_BIN_MULTIPLIERS[0] * scale;
+  let distance = Math.abs(Math.log(selected / value));
+  for (const multiplier of NICE_BIN_MULTIPLIERS.slice(1)) {
+    const candidate = multiplier * scale;
+    const candidateDistance = Math.abs(Math.log(candidate / value));
+    if (candidateDistance < distance) {
+      selected = candidate;
+      distance = candidateDistance;
+    }
+  }
+  const nextScaleCandidate = 10 * scale;
+  return Math.abs(Math.log(nextScaleCandidate / value)) < distance ? nextScaleCandidate : selected;
+}
+
+function weightedObservedVoltageQuantile(
+  sortedSamples: readonly ObservedDistributionSample[],
+  totalDurationSeconds: number,
+  fraction: number,
+): number {
+  if (sortedSamples.length === 0 || !(totalDurationSeconds > 0)) return Number.NaN;
+  const targetDuration = totalDurationSeconds * fraction;
+  let cumulativeDuration = 0;
+  for (const sample of sortedSamples) {
+    cumulativeDuration += sample.durationSeconds;
+    if (cumulativeDuration >= targetDuration) return sample.voltageV;
+  }
+  return sortedSamples.at(-1)!.voltageV;
+}
+
+function clampInteger(value: number, minimum: number, maximum: number): number {
+  if (!Number.isFinite(value)) return minimum;
+  return Math.max(minimum, Math.min(maximum, Math.round(value)));
+}
+
+function normalizeFiniteZero(value: number): number {
+  if (!Number.isFinite(value)) return value;
+  const normalized = Number(value.toPrecision(12));
+  return Object.is(normalized, -0) ? 0 : normalized;
 }
 
 function smallMedian(values: readonly number[]): number {
@@ -1175,7 +1402,7 @@ export function analyzeBatteryLoadResponse(
 
   const limitations: string[] = [...DEFAULT_LIMITATIONS];
   if (dataset.segments.modes.length === 0) limitations.push("日志没有可用 Robot Mode 区间。");
-  if (lowVoltage.status === "unavailable") limitations.push("日志没有可用 Brownout Voltage 序列。");
+  if (lowVoltage.status === "unavailable") limitations.push("日志没有可用 Brownout 电压序列。");
   if (brownoutEvents.status === "unavailable") limitations.push("日志没有可用 Brownout 状态序列。");
 
   return {

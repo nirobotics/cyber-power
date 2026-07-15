@@ -13,7 +13,12 @@ import {
 } from "../log-analysis/core";
 import { BatteryAnalysisSection } from "./battery-analysis-section";
 import { DataQualityDetails } from "./data-quality-details";
-import { RobotTimeline, SubsystemTimelines, type TimelineFocus } from "./energy-timeline";
+import {
+  RobotTimeline,
+  SubsystemTimelines,
+  type RobotMetric,
+  type TimelineFocus,
+} from "./energy-timeline";
 import { FloatingTimeRange } from "./floating-time-range";
 import { MetricsRail } from "./metrics-rail";
 import { SubsystemShare } from "./subsystem-share";
@@ -34,6 +39,9 @@ import { selectDefaultTimeRange } from "./time-range";
 import { V2AnalysisSections } from "./v2-analysis-sections";
 
 type DashboardTab = "robot" | "battery" | "subsystems" | "motors" | "simulation" | "quality";
+
+const ROBOT_OVERVIEW_METRICS = ["current", "power", "energy"] as const satisfies readonly RobotMetric[];
+const BATTERY_TIMELINE_METRICS = ["voltage"] as const satisfies readonly RobotMetric[];
 
 type BatteryAnalysis = ReturnType<typeof analyzeBatteryLoadResponse>;
 type BatteryAnalysisResolver = (
@@ -141,12 +149,14 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     [committedRange, dataset, getBatteryAnalysis, tab],
   );
   const supplyLimitTargets = useMemo(
-    () => buildSupplyLimitTargetOptions(dataset, analysis),
-    [analysis, dataset],
+    () => tab === "simulation"
+      ? buildSupplyLimitTargetOptions(dataset, committedRange)
+      : [],
+    [committedRange, dataset, tab],
   );
   const supplyEstimateState = useMemo(() => {
     const parsed = supplyLimitDraftsToInputs(draftSupplyLimits);
-    if (tab !== "simulation") {
+    if (tab !== "simulation" || !dataset.v2) {
       return { estimate: null, errors: [] as SupplyLimitDisplayError[] };
     }
     if (parsed.errors.length > 0) {
@@ -323,9 +333,9 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     });
   }, []);
 
-  const updateSupplyLimitDraft = useCallback((nodeId: string, patch: SupplyLimitDraftPatch) => {
+  const updateSupplyLimitDraft = useCallback((motorGroupId: string, patch: SupplyLimitDraftPatch) => {
     setDraftSupplyLimits((current) =>
-      upsertSupplyLimitDraft(current, nodeId, patch));
+      upsertSupplyLimitDraft(current, motorGroupId, patch));
   }, []);
 
   const clearSupplyLimitScenario = useCallback(() => {
@@ -387,6 +397,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               cursorUs={displayedCursorUs}
               cursorPreviewActive={transientCursorUs !== null}
               focus={focus}
+              metrics={ROBOT_OVERVIEW_METRICS}
               onCursorPreview={previewCursor}
               onCursorCommit={commitCursorNow}
             />
@@ -398,7 +409,18 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
             id="analysis-panel-battery"
             role="tabpanel"
             aria-labelledby="analysis-tab-battery"
+            className="grid gap-2.5"
           >
+            <RobotTimeline
+              dataset={dataset}
+              range={previewRange}
+              cursorUs={displayedCursorUs}
+              cursorPreviewActive={transientCursorUs !== null}
+              focus={null}
+              metrics={BATTERY_TIMELINE_METRICS}
+              onCursorPreview={previewCursor}
+              onCursorCommit={commitCursorNow}
+            />
             <BatteryAnalysisSection
               analysis={batteryAnalysis}
               dataset={dataset}
@@ -459,6 +481,9 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               errors={supplyEstimateState.errors}
               estimate={supplyEstimateState.estimate}
               simulationEnabled={supplySimulationEnabled}
+              unavailableReason={dataset.v2
+                ? undefined
+                : "当前 V1 日志没有电机 Manifest，无法按 Leader 电机组进行限流模拟。"}
               onSimulationEnabledChange={setSupplySimulationEnabled}
               onUpdateDraft={updateSupplyLimitDraft}
               onClear={clearSupplyLimitScenario}

@@ -1,4 +1,4 @@
-import { LineChart } from "echarts/charts";
+import { BarChart, LineChart } from "echarts/charts";
 import {
   DataZoomComponent,
   GridComponent,
@@ -10,6 +10,7 @@ import { CanvasRenderer } from "echarts/renderers";
 
 echarts.use([
   LineChart,
+  BarChart,
   GridComponent,
   TooltipComponent,
   DataZoomComponent,

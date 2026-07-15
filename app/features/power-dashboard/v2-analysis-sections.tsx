@@ -1,5 +1,5 @@
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { Fragment, useState } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import {
   MOTOR_COVERAGE_STATUS,
   type EnergyLoggerV2Contract,
@@ -19,7 +19,7 @@ const COVERAGE_REASONS = [
     code: MOTOR_COVERAGE_STATUS.REGENERATIVE_STATOR_CURRENT,
     label: "Stator Current 为负：再生制动工况（不代表电池净回充）",
   },
-  { code: MOTOR_COVERAGE_STATUS.PHYSICALLY_IMPOSSIBLE, label: "功率守恒检查未通过" },
+  { code: MOTOR_COVERAGE_STATUS.PHYSICALLY_IMPOSSIBLE, label: "功率一致性检查未通过" },
 ] as const satisfies ReadonlyArray<{ code: MotorCoverageStatusCode; label: string }>;
 
 export function followerMotorNames(group: EnergyLoggerV2MotorGroupMetrics): string[] {
@@ -57,10 +57,7 @@ export function V2AnalysisSections({
   return (
     <div className="grid gap-2.5">
       {analysis ? (
-        <section className="card overflow-hidden">
-          <div className="border-b border-line px-4 py-3">
-            <h2 className="text-sm font-semibold text-ink">电机效率与减速比推荐</h2>
-          </div>
+        <section className="card overflow-hidden" aria-label="电机分析">
           {groups.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-ink-dim">
               当前 Manifest 没有可分析的 Leader 电机。
@@ -307,49 +304,117 @@ function CalculationPrinciples({
           计算原理
         </h2>
       </div>
-      <ol className="grid gap-2 px-4 py-4 text-xs leading-relaxed text-ink-dim md:grid-cols-2">
-        <li>1. 覆盖率按相邻样本的实际 dt 累计，以有效时长除以选区时长，不按样本数量计算。</li>
+      <ol className="space-y-3 px-4 py-4 text-xs leading-relaxed text-ink-dim">
         <li>
-          2. 效率只使用有限信号、正电池电压、正 Supply Current 和正 Stator Current；功率守恒检查为
-          <span className="font-mono"> Pmech + Pcu ≤ 1.1 × Pbat + 1 W</span>，即容差为 1.1× + 1 W。
+          <p>1. 覆盖率按相邻样本的实际时间累计，以有效时长除以选区时长，不按样本数量计算。</p>
+          <MathFormula label="覆盖率等于有效时长除以选区时长">
+            <msub><mi>η</mi><mtext>coverage</mtext></msub>
+            <mo>=</mo>
+            <mfrac>
+              <msub><mi>T</mi><mtext>valid</mtext></msub>
+              <msub><mi>T</mi><mtext>selected</mtext></msub>
+            </mfrac>
+          </MathFormula>
         </li>
-        <li>3. 减速比候选覆盖当前减速比的 0.5×–2×，按对数间隔评估 61 个点。</li>
         <li>
-          4. 每个候选保持日志中的机械侧速度与负载扭矩不变。先以
-          <span className="font-mono"> Iload = max(Istator - I0, 0)</span> 扣除不随传动比缩放的空载电流，再按
-          <span className="font-mono"> f = N′ / N、ω′ = fω、I′ = I0 + Iload / f、Vreq = I′R + |ω′| / Kv</span>
-          换算电机侧转速、单台电机 Stator Current 与所需电压。
+          <p>2. 效率只使用有限信号、正电池电压、正 Supply Current 和正 Stator Current；机械功率与铜耗还必须分别不超过电池输入功率，并满足下式。这是剔除明显不可信区间的功率一致性门禁，不是精确功率守恒证明。</p>
+          <MathFormula label="机械功率加铜耗不超过一点一倍电池输入功率再加一瓦">
+            <msub><mi>P</mi><mtext>mech</mtext></msub>
+            <mo>+</mo>
+            <msub><mi>P</mi><mtext>cu</mtext></msub>
+            <mo>≤</mo>
+            <mn>1.1</mn><mo>×</mo>
+            <msub><mi>P</mi><mtext>bat</mtext></msub>
+            <mo>+</mo><mn>1</mn><mtext>W</mtext>
+          </MathFormula>
         </li>
         <li>
-          5. 超过堵转电流、105% 空载转速或 105% 电池电压的候选会被淘汰；评分为
-          <span className="font-mono"> Score = Σ(nI′²RΔt) + 25 W × Σ((Vreq/Vbat)^4Δt)</span>，
-          其中 25 W 是保留电压余量的经验权重，不是电机物理常数；推荐减速比取最低可行评分点。
+          <p>3. 减速比候选覆盖当前减速比的 0.5 倍至 2 倍，按对数间隔评估 61 个点。</p>
+          <MathFormula label="候选减速比从当前减速比的一半到两倍">
+            <mn>0.5</mn><mi>N</mi><mo>≤</mo><mi>N′</mi><mo>≤</mo><mn>2</mn><mi>N</mi>
+          </MathFormula>
+        </li>
+        <li>
+          <p>4. 每个候选在相同历史有效区间内保持机构输出转速、负载扭矩和动作时长不变，并忽略传动效率随减速比变化；先扣除不随传动比缩放的空载电流，再换算电机侧转速、单台电机 Stator Current 与所需电压。</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MathFormula label="负载电流等于 Stator Current 减去空载电流，且不小于零">
+              <msub><mi>I</mi><mtext>load</mtext></msub><mo>=</mo>
+              <mi>max</mi><mo>(</mo>
+              <msub><mi>I</mi><mtext>stator</mtext></msub><mo>−</mo><msub><mi>I</mi><mn>0</mn></msub>
+              <mo>,</mo><mn>0</mn><mo>)</mo>
+            </MathFormula>
+            <MathFormula label="候选减速比缩放系数等于候选减速比除以当前减速比">
+              <mi>f</mi><mo>=</mo><mfrac><mi>N′</mi><mi>N</mi></mfrac>
+            </MathFormula>
+            <MathFormula label="候选电机转速等于缩放系数乘以当前电机转速">
+              <mi>ω′</mi><mo>=</mo><mi>f</mi><mi>ω</mi>
+            </MathFormula>
+            <MathFormula label="候选电流等于空载电流加负载电流除以缩放系数">
+              <mi>I′</mi><mo>=</mo><msub><mi>I</mi><mn>0</mn></msub><mo>+</mo>
+              <mfrac><msub><mi>I</mi><mtext>load</mtext></msub><mi>f</mi></mfrac>
+            </MathFormula>
+            <MathFormula label="所需电压等于电阻压降加反电动势">
+              <msub><mi>V</mi><mtext>req</mtext></msub><mo>=</mo><mi>I′</mi><mi>R</mi><mo>+</mo>
+              <mfrac><mrow><mo>|</mo><mi>ω′</mi><mo>|</mo></mrow><msub><mi>K</mi><mi>v</mi></msub></mfrac>
+            </MathFormula>
+          </div>
+        </li>
+        <li>
+          <p>5. 超过堵转电流、105% 空载转速或 105% 电池电压的候选会被淘汰；其余候选同时比较铜耗和电压余量，推荐减速比取最低可行评分点。“更好”只表示在相同历史工况假设下该启发式评分更低。25 W 是经验权重，不代表额外或预测能耗；电压余量项可能使推荐点的模型铜耗高于当前值。</p>
+          <MathFormula label="评分等于铜耗积分加二十五瓦乘以电压占用四次方积分">
+            <mtext>Score</mtext><mo>=</mo>
+            <mo>∑</mo><mo>(</mo><mi>n</mi><msup><mi>I′</mi><mn>2</mn></msup><mi>R</mi><mi>Δt</mi><mo>)</mo>
+            <mo>+</mo><mn>25</mn><mtext>W</mtext><mo>×</mo><mo>∑</mo>
+            <mrow><mo>(</mo><msup><mrow><mo>(</mo><mfrac><msub><mi>V</mi><mtext>req</mtext></msub><msub><mi>V</mi><mtext>bat</mtext></msub></mfrac><mo>)</mo></mrow><mn>4</mn></msup><mi>Δt</mi><mo>)</mo></mrow>
+          </MathFormula>
         </li>
         <li>
           6. Follower 只提供自己的 Supply Current；效率与覆盖率使用 Leader 的原生 Stator Current、原生转速和整组 Supply Current 合计计算，不能把 Follower 伪装成独立效率曲线。
         </li>
         <li>
-          7. 减速比推荐只使用带子系统状态且 Stator Current 大于该型号空载电流的工作区间；当前与推荐后铜耗均在完全相同的有效区间内按
-          <span className="font-mono"> Σ(nI²RΔt)</span> 计算。
+          <p>7. 减速比推荐只使用带子系统状态且 Stator Current 大于该型号空载电流的工作区间；当前与推荐后铜耗均在完全相同的有效区间内计算。</p>
+          <MathFormula label="铜耗能量等于电机数量乘电流平方乘电阻和时间的总和">
+            <msub><mi>E</mi><mtext>cu</mtext></msub><mo>=</mo>
+            <mo>∑</mo><mo>(</mo><mi>n</mi><msup><mi>I</mi><mn>2</mn></msup><mi>R</mi><mi>Δt</mi><mo>)</mo>
+          </MathFormula>
         </li>
         <li>
-          8. “预计铜耗变化”只是该电机组绕组铜耗模型的“当前值−推荐后值”；负值按“增加”显示。比例的分母是同一批有效区间内
-          <span className="font-mono"> Σ(Vbattery × Isupply,group × Δt)</span>。它不是整机节能比例，也不包含控制器、传动、摩擦和其他负载。
+          <p>8. “预计铜耗变化”只是该电机组绕组铜耗模型的“当前值−推荐后值”；负值按“增加”显示。变化比例使用同一批有效区间内的电机组实测输入能量作为分母，不是整机节能比例。</p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            <MathFormula label="电机组实测输入能量等于电池电压乘电机组 Supply Current 和时间的总和">
+              <msub><mi>E</mi><mtext>input,group</mtext></msub><mo>=</mo>
+              <mo>∑</mo><mo>(</mo><msub><mi>V</mi><mtext>battery</mtext></msub><mo>×</mo>
+              <msub><mi>I</mi><mtext>supply,group</mtext></msub><mo>×</mo><mi>Δt</mi><mo>)</mo>
+            </MathFormula>
+            <MathFormula label="铜耗变化比例等于当前铜耗减推荐后铜耗再除以电机组实测输入能量">
+              <mtext>比例</mtext><mo>=</mo>
+              <mfrac>
+                <mrow><msub><mi>E</mi><mtext>cu,current</mtext></msub><mo>−</mo><msub><mi>E</mi><mtext>cu,recommended</mtext></msub></mrow>
+                <msub><mi>E</mi><mtext>input,group</mtext></msub>
+              </mfrac>
+            </MathFormula>
+          </div>
+          <p className="mt-2 text-ink-faint">该比例不包含控制器、传动、摩擦和其他负载。</p>
         </li>
-        <li>9. 结果只代表日志覆盖的历史工况；不预测机构摩擦、控制器限流变化、闭环稳定性或瞬态响应。</li>
+        <li>9. 结果只代表日志覆盖的历史工况；不保证更换减速比后整机输入能量下降、Brownout 风险降低、机构性能或控制稳定性改善，必须通过实机复测确认。</li>
       </ol>
       {magnitudeOnly ? (
         <p className="border-t border-line px-4 py-3 text-xs text-warn">
           当前 V{contractVersion} 日志的 Stator Current 仅有幅值，不能区分驱动与再生制动工况，
           也不能据此判断电池净回充。
         </p>
-      ) : contractVersion === "2.3" ? (
-        <p className="border-t border-line px-4 py-3 text-xs text-ink-dim">
-          V2.3 保留 Stator Current 符号；负值表示再生制动工况，不代表电池净回充。该区间保留在有效性统计中，
-          但不参与效率与减速比估算。
-        </p>
       ) : null}
     </section>
+  );
+}
+
+function MathFormula({ label, children }: { label: string; children: ReactNode }) {
+  return (
+    <div className="mt-2 overflow-x-auto rounded border border-line bg-surface-2/45 px-3 py-2 text-center text-sm text-ink">
+      <math display="block" aria-label={label}>
+        <mrow>{children}</mrow>
+      </math>
+    </div>
   );
 }
 

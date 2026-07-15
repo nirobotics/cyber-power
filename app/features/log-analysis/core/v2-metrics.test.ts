@@ -7,9 +7,33 @@ import {
 } from "../../../../tests/fixtures/wpilog-builder";
 import { parseEnergyLog } from "./energy-analysis";
 import { MOTOR_COVERAGE_STATUS } from "./motor-models";
-import { analyzeEnergyLoggerV2Range, deriveEnergyLoggerV2Core } from "./v2-metrics";
+import {
+  analyzeEnergyLoggerV2Range,
+  deriveEnergyLoggerV2Core,
+  deriveEnergyLoggerV2MotorGroupElectricalSeries,
+} from "./v2-metrics";
 
 describe("minimal EnergyLogger V2 metrics", () => {
+  it("derives one strict Supply Current series per Manifest Leader group", async () => {
+    const fixture = buildEnergyV2Fixture();
+    appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "DRIVE", indexer: "IDLE" }, 0);
+    appendEnergyV2FixtureSample(fixture, 2_000_000, { drive: "DRIVE", indexer: "IDLE" }, 0);
+    const dataset = await parseEnergyLog(fixture.builder.build());
+
+    const groups = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)!;
+    expect(groups).toHaveLength(2);
+    const drive = groups.find((group) => group.subsystemName === "drive")!;
+    const indexer = groups.find((group) => group.subsystemName === "indexer")!;
+    expect(drive).toMatchObject({
+      leaderName: "frontLeft",
+      motorNames: ["frontLeft", "frontRight"],
+      motorCount: 2,
+    });
+    expect(Array.from(drive.currentA.values)).toEqual([20, 20]);
+    expect(Array.from(indexer.currentA.values)).toEqual([5, 5]);
+    expect(groups.some((group) => group.leaderName === "frontRight")).toBe(false);
+  });
+
   it("aggregates subsystem energy by subsystem state", async () => {
     const fixture = buildEnergyV2Fixture();
     appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "IDLE", indexer: "IDLE" }, 0);

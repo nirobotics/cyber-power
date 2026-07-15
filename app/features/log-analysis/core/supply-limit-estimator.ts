@@ -1,13 +1,17 @@
 import { analyzeEnergyRange } from "./energy-analysis";
 import { rangeIntersections, upperBound } from "./time-series";
+import {
+  deriveEnergyLoggerV2MotorGroupElectricalSeries,
+  type EnergyLoggerV2MotorGroupElectricalSeries,
+} from "./v2-metrics";
 import type {
   EnergyLogDataset,
   NumericSeries,
-  SubsystemNode,
   SupplyCurrentLimitInput,
   SupplyLimitEstimate,
   SupplyLimitEstimateOptions,
   SupplyLimitMetricSnapshot,
+  SupplyLimitMotorGroupMetrics,
   SupplyLimitTargetEstimate,
   SupplyLimitValidationIssue,
   SupplyLimitWarning,
@@ -16,22 +20,6 @@ import type {
 } from "./types";
 
 const CURRENT_TOLERANCE_A = 1e-6;
-const POWER_TOLERANCE_W = 1e-6;
-const ENERGY_TOLERANCE_WH = 1e-9;
-
-interface EnergyCursor {
-  series: NumericSeries;
-  currentA?: NumericSeries;
-  limitA?: number;
-  index: number;
-  previous: number;
-  baselineWh: number;
-  estimatedWh: number;
-  resetCount: number;
-  unmatchedEnergyWh: number;
-  currentIndex: number;
-  currentValueA: number;
-}
 
 interface HeldNumericCursor {
   series: NumericSeries;
@@ -41,7 +29,8 @@ interface HeldNumericCursor {
 
 interface ActiveTarget {
   input: SupplyCurrentLimitInput;
-  node: SubsystemNode;
+  group: EnergyLoggerV2MotorGroupElectricalSeries;
+  baseline: SupplyLimitMetricSnapshot;
   warnings: SupplyLimitWarning[];
   removedCurrentA: number;
   estimatedPeakCurrentA: number;
@@ -51,8 +40,8 @@ interface ActiveTarget {
   clippedDurationSeconds: number;
   ampSecondsRemoved: number;
   triggered: boolean;
-  positivePowerWithoutCurrent: boolean;
-  energyCursor: EnergyCursor;
+  sawNonfinite: boolean;
+  estimatedEnergyWh: number;
   estimatedEnabledEnergyWh: number;
   currentCursor: HeldNumericCursor;
   powerCursor: HeldNumericCursor;
@@ -74,16 +63,111 @@ export class SupplyLimitValidationError extends Error {
   }
 }
 
+function isActive(input: SupplyCurrentLimitInput): boolean {
+  return input.enabled !== false;
+}
+
+function groupLabel(group: EnergyLoggerV2MotorGroupElectricalSeries): string {
+  return `${group.subsystemName}/${group.leaderName}`;
+}
+
+export function validateSupplyCurrentLimits(
+  dataset: EnergyLogDataset,
+  limits: readonly SupplyCurrentLimitInput[],
+): SupplyLimitValidationIssue[] {
+  const groups = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset);
+  if (!groups) {
+    return [{
+      code: "V2_MOTOR_GROUPS_REQUIRED",
+      message: "当前 V1 日志没有电机 Manifest，无法按 Leader 电机组进行限流模拟。",
+    }];
+  }
+
+  const issues: SupplyLimitValidationIssue[] = [];
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
+  const firstInputByGroup = new Map<string, number>();
+  limits.forEach((input, inputIndex) => {
+    if (!groupsById.has(input.motorGroupId)) {
+      issues.push({
+        code: "UNKNOWN_MOTOR_GROUP",
+        message: `日志中不存在 Manifest Leader 电机组：${input.motorGroupId}`,
+        inputIndex,
+        motorGroupIds: [input.motorGroupId],
+      });
+    }
+
+    const previousIndex = firstInputByGroup.get(input.motorGroupId);
+    if (previousIndex !== undefined) {
+      issues.push({
+        code: "DUPLICATE_TARGET",
+        message: `限流方案重复选择了同一个电机组：${input.motorGroupId}`,
+        inputIndex,
+        motorGroupIds: [input.motorGroupId],
+      });
+    } else {
+      firstInputByGroup.set(input.motorGroupId, inputIndex);
+    }
+
+    if (isActive(input) && (!Number.isFinite(input.limitA) || input.limitA < 0)) {
+      issues.push({
+        code: "INVALID_LIMIT",
+        message: `${input.motorGroupId} 的电机组合计 Supply Current 上限必须是大于或等于 0 的有限数字。`,
+        inputIndex,
+        motorGroupIds: [input.motorGroupId],
+      });
+    }
+  });
+  return issues;
+}
+
+function resolveRange(
+  dataset: EnergyLogDataset,
+  requested: Partial<TimeRange> | undefined,
+): TimeRange & { durationSeconds: number } {
+  const requestedStartUs = requested?.startUs ?? dataset.bounds.energyStartUs;
+  const requestedEndUs = requested?.endUs ?? dataset.bounds.energyEndUs;
+  if (
+    !Number.isFinite(requestedStartUs) ||
+    !Number.isFinite(requestedEndUs) ||
+    requestedEndUs < requestedStartUs
+  ) {
+    throw new SupplyLimitValidationError([{
+      code: "INVALID_RANGE",
+      message: "限流模拟范围必须使用有限时间戳，并且终点不能早于起点。",
+    }]);
+  }
+  const startUs = Math.max(dataset.bounds.energyStartUs, Math.round(requestedStartUs));
+  const endUs = Math.min(dataset.bounds.energyEndUs, Math.round(requestedEndUs));
+  if (endUs < startUs) {
+    throw new SupplyLimitValidationError([{
+      code: "INVALID_RANGE",
+      message: "限流模拟范围不在日志的能量数据范围内。",
+    }]);
+  }
+  return { startUs, endUs, durationSeconds: (endUs - startUs) / 1_000_000 };
+}
+
 function heldNumeric(series: NumericSeries, timestampUs: number, fallback = 0): number {
   const index = upperBound(series.timestampsUs, timestampUs) - 1;
   return index >= 0 ? series.values[index] : fallback;
 }
 
-function createHeldNumericCursor(series: NumericSeries, startUs: number): HeldNumericCursor {
+function isEnabledAt(dataset: EnergyLogDataset, timestampUs: number): boolean {
+  const series = dataset.series.enabled;
+  if (!series) return true;
+  const index = upperBound(series.timestampsUs, timestampUs) - 1;
+  return index >= 0 && series.values[index] !== 0;
+}
+
+function createHeldNumericCursor(
+  series: NumericSeries,
+  startUs: number,
+  fallback = 0,
+): HeldNumericCursor {
   return {
     series,
     index: upperBound(series.timestampsUs, startUs),
-    value: heldNumeric(series, startUs, 0),
+    value: heldNumeric(series, startUs, fallback),
   };
 }
 
@@ -99,196 +183,157 @@ function advanceHeldNumericCursor(cursor: HeldNumericCursor, timestampUs: number
 }
 
 function currentScale(currentA: number, limitA: number): number {
-  return currentA > 0 ? Math.min(1, limitA / currentA) : 1;
+  return Number.isFinite(currentA) && currentA > 0
+    ? Math.min(1, limitA / currentA)
+    : 1;
 }
 
-function isActive(input: SupplyCurrentLimitInput): boolean {
-  return input.enabled !== false;
-}
-
-export function validateSupplyCurrentLimits(
-  dataset: EnergyLogDataset,
-  limits: readonly SupplyCurrentLimitInput[],
-): SupplyLimitValidationIssue[] {
-  const issues: SupplyLimitValidationIssue[] = [];
-  const nodesById = new Map(dataset.subsystems.map((node) => [node.id, node]));
-  const firstInputByNode = new Map<string, number>();
-
-  limits.forEach((input, inputIndex) => {
-    const node = nodesById.get(input.nodeId);
-    if (!node) {
-      issues.push({
-        code: "UNKNOWN_NODE",
-        message: `日志中不存在 EnergyLogger 节点：${input.nodeId}`,
-        inputIndex,
-        nodeIds: [input.nodeId],
-      });
+function positivePowerEnergyInRange(
+  powerW: NumericSeries,
+  range: TimeRange,
+): number {
+  if (range.endUs <= range.startUs) return 0;
+  const cursor = createHeldNumericCursor(powerW, range.startUs, Number.NaN);
+  let previousTimestampUs: number | undefined;
+  let energyWh = 0;
+  forEachMergedTimestamp([powerW], range.startUs, range.endUs, (timestampUs) => {
+    if (previousTimestampUs !== undefined && Number.isFinite(cursor.value)) {
+      const durationHours = (timestampUs - previousTimestampUs) / 3_600_000_000;
+      energyWh += Math.max(0, cursor.value) * durationHours;
     }
-
-    const previousIndex = firstInputByNode.get(input.nodeId);
-    if (previousIndex !== undefined) {
-      issues.push({
-        code: "DUPLICATE_TARGET",
-        message: `限流方案重复选择了节点：${input.nodeId}`,
-        inputIndex,
-        nodeIds: [input.nodeId],
-      });
-    } else {
-      firstInputByNode.set(input.nodeId, inputIndex);
-    }
-
-    if (!isActive(input)) return;
-    if (!Number.isFinite(input.limitA) || input.limitA < 0) {
-      issues.push({
-        code: "INVALID_LIMIT",
-        message: `${input.nodeId} 的 Supply 电流上限必须是大于或等于 0 的有限数字。`,
-        inputIndex,
-        nodeIds: [input.nodeId],
-      });
-    }
-    if (node && node.childrenIds.length > 0 && input.aggregateConfirmed !== true) {
-      issues.push({
-        code: "AGGREGATE_CONFIRMATION_REQUIRED",
-        message: `${node.rawPath} 是聚合节点，必须确认它代表同构电机组后才能估算。`,
-        inputIndex,
-        nodeIds: [node.id],
-      });
-    }
+    advanceHeldNumericCursor(cursor, timestampUs);
+    previousTimestampUs = timestampUs;
   });
+  return energyWh;
+}
 
-  const activeIds = new Set(
-    limits
-      .filter((input) => isActive(input) && nodesById.has(input.nodeId))
-      .map((input) => input.nodeId),
-  );
-  const conflicts = new Set<string>();
-  for (const nodeId of activeIds) {
-    let parentId = nodesById.get(nodeId)?.parentId ?? null;
-    while (parentId) {
-      if (activeIds.has(parentId)) {
-        const key = `${parentId}\0${nodeId}`;
-        if (!conflicts.has(key)) {
-          conflicts.add(key);
-          issues.push({
-            code: "HIERARCHY_CONFLICT",
-            message: `不能同时限制聚合节点 ${parentId} 和它的后代 ${nodeId}，否则会重复扣减。`,
-            nodeIds: [parentId, nodeId],
-          });
-        }
+function limitedGroupEnergyInRange(
+  group: EnergyLoggerV2MotorGroupElectricalSeries,
+  limitA: number,
+  range: TimeRange,
+): { estimatedWh: number; sawNonfinite: boolean } {
+  if (range.endUs <= range.startUs) return { estimatedWh: 0, sawNonfinite: false };
+  const currentCursor = createHeldNumericCursor(group.currentA, range.startUs, Number.NaN);
+  const powerCursor = createHeldNumericCursor(group.powerW, range.startUs, Number.NaN);
+  let previousTimestampUs: number | undefined;
+  let estimatedWh = 0;
+  let sawNonfinite = false;
+  forEachMergedTimestamp([group.currentA, group.powerW], range.startUs, range.endUs, (timestampUs) => {
+    if (previousTimestampUs !== undefined) {
+      if (Number.isFinite(currentCursor.value) && Number.isFinite(powerCursor.value)) {
+        const scale = currentScale(currentCursor.value, limitA);
+        const estimatedPowerW = powerCursor.value > 0 ? powerCursor.value * scale : powerCursor.value;
+        const durationHours = (timestampUs - previousTimestampUs) / 3_600_000_000;
+        estimatedWh += Math.max(0, estimatedPowerW) * durationHours;
+      } else {
+        sawNonfinite = true;
       }
-      parentId = nodesById.get(parentId)?.parentId ?? null;
     }
-  }
-
-  return issues;
+    advanceHeldNumericCursor(currentCursor, timestampUs);
+    advanceHeldNumericCursor(powerCursor, timestampUs);
+    previousTimestampUs = timestampUs;
+  });
+  return { estimatedWh, sawNonfinite };
 }
 
-function resolveRange(
-  dataset: EnergyLogDataset,
-  requested: Partial<TimeRange> | undefined,
-): TimeRange & { durationSeconds: number } {
-  const requestedStartUs = requested?.startUs ?? dataset.bounds.energyStartUs;
-  const requestedEndUs = requested?.endUs ?? dataset.bounds.energyEndUs;
-  if (
-    !Number.isFinite(requestedStartUs) ||
-    !Number.isFinite(requestedEndUs) ||
-    requestedEndUs < requestedStartUs
-  ) {
-    throw new SupplyLimitValidationError([
-      {
-        code: "INVALID_RANGE",
-        message: "限流估算范围必须使用有限时间戳，并且终点不能早于起点。",
-      },
-    ]);
-  }
-
-  const startUs = Math.max(dataset.bounds.energyStartUs, Math.round(requestedStartUs));
-  const endUs = Math.min(dataset.bounds.energyEndUs, Math.round(requestedEndUs));
-  if (endUs < startUs) {
-    throw new SupplyLimitValidationError([
-      { code: "INVALID_RANGE", message: "限流估算范围不在日志的能量数据范围内。" },
-    ]);
-  }
-  return { startUs, endUs, durationSeconds: (endUs - startUs) / 1_000_000 };
-}
-
-function createEnergyCursor(
-  series: NumericSeries,
-  startUs: number,
-  currentA?: NumericSeries,
-  limitA?: number,
-): EnergyCursor {
-  if (series.timestampsUs.length > 0 && startUs <= series.timestampsUs[0]) {
-    return {
-      series,
-      currentA,
-      limitA,
-      index: 0,
-      previous: 0,
-      baselineWh: 0,
-      estimatedWh: 0,
-      resetCount: 0,
-      unmatchedEnergyWh: 0,
-      currentIndex: currentA ? upperBound(currentA.timestampsUs, startUs) : 0,
-      currentValueA: currentA ? heldNumeric(currentA, startUs, 0) : 0,
-    };
+function peakInRange(series: NumericSeries, range: TimeRange): { value: number; timestampUs: number } {
+  let value = heldNumeric(series, range.startUs, Number.NaN);
+  let timestampUs = range.startUs;
+  if (!Number.isFinite(value)) value = Number.NEGATIVE_INFINITY;
+  let index = upperBound(series.timestampsUs, range.startUs);
+  while (index < series.timestampsUs.length && series.timestampsUs[index] <= range.endUs) {
+    const candidate = series.values[index];
+    if (Number.isFinite(candidate) && candidate > value) {
+      value = candidate;
+      timestampUs = series.timestampsUs[index];
+    }
+    index += 1;
   }
   return {
-    series,
-    currentA,
-    limitA,
-    index: upperBound(series.timestampsUs, startUs),
-    previous: heldNumeric(series, startUs, 0),
-    baselineWh: 0,
-    estimatedWh: 0,
-    resetCount: 0,
-    unmatchedEnergyWh: 0,
-    currentIndex: currentA ? upperBound(currentA.timestampsUs, startUs) : 0,
-    currentValueA: currentA ? heldNumeric(currentA, startUs, 0) : 0,
+    value: Number.isFinite(value) ? value : 0,
+    timestampUs,
   };
 }
 
-function advanceEnergyCursor(cursor: EnergyCursor, timestampUs: number): void {
-  while (
-    cursor.index < cursor.series.timestampsUs.length &&
-    cursor.series.timestampsUs[cursor.index] <= timestampUs
-  ) {
-    const sampleTimestampUs = cursor.series.timestampsUs[cursor.index];
-    const value = cursor.series.values[cursor.index];
-    if (value >= cursor.previous) {
-      const deltaWh = value - cursor.previous;
-      cursor.baselineWh += deltaWh;
-      if (cursor.currentA && cursor.limitA !== undefined) {
-        while (
-          cursor.currentIndex < cursor.currentA.timestampsUs.length &&
-          cursor.currentA.timestampsUs[cursor.currentIndex] <= sampleTimestampUs
-        ) {
-          cursor.currentValueA = cursor.currentA.values[cursor.currentIndex];
-          cursor.currentIndex += 1;
-        }
-        const currentA = cursor.currentValueA;
-        if (deltaWh > 0 && currentA <= 0) cursor.unmatchedEnergyWh += deltaWh;
-        cursor.estimatedWh += deltaWh * currentScale(currentA, cursor.limitA);
-      } else {
-        cursor.estimatedWh += deltaWh;
-      }
-    } else {
-      cursor.resetCount += 1;
-    }
-    cursor.previous = value;
-    cursor.index += 1;
-  }
+function groupHasUsableData(
+  group: EnergyLoggerV2MotorGroupElectricalSeries,
+  range: TimeRange,
+): boolean {
+  if (range.endUs <= range.startUs) return false;
+  const currentCursor = createHeldNumericCursor(group.currentA, range.startUs, Number.NaN);
+  const powerCursor = createHeldNumericCursor(group.powerW, range.startUs, Number.NaN);
+  let usable = false;
+  forEachMergedTimestamp([group.currentA, group.powerW], range.startUs, range.endUs, (timestampUs) => {
+    if (usable || timestampUs >= range.endUs) return;
+    const currentA = advanceHeldNumericCursor(currentCursor, timestampUs);
+    const powerW = advanceHeldNumericCursor(powerCursor, timestampUs);
+    if (Number.isFinite(currentA) && Number.isFinite(powerW)) usable = true;
+  });
+  return usable;
 }
 
-function scaledEnergyInRange(
-  energyWh: NumericSeries,
-  currentA: NumericSeries,
-  limitA: number,
-  range: TimeRange,
-): EnergyCursor {
-  const cursor = createEnergyCursor(energyWh, range.startUs, currentA, limitA);
-  advanceEnergyCursor(cursor, range.endUs);
-  return cursor;
+function metricSnapshot(
+  dataset: EnergyLogDataset,
+  group: EnergyLoggerV2MotorGroupElectricalSeries,
+  range: TimeRange & { durationSeconds: number },
+): SupplyLimitMetricSnapshot {
+  const energyWh = positivePowerEnergyInRange(group.powerW, range);
+  const peakPower = peakInRange(group.powerW, range);
+  const peakCurrent = peakInRange(group.currentA, range);
+  const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
+  const enabledDurationSeconds = enabledIntervals.reduce(
+    (sum, interval) => sum + interval.durationSeconds,
+    0,
+  );
+  const averagePowerW = dataset.series.enabled
+    ? enabledDurationSeconds > 0
+      ? enabledIntervals.reduce(
+          (sum, interval) => sum + positivePowerEnergyInRange(group.powerW, interval),
+          0,
+        ) * 3600 / enabledDurationSeconds
+      : 0
+    : range.durationSeconds > 0
+      ? energyWh * 3600 / range.durationSeconds
+      : 0;
+  return {
+    energyWh,
+    averagePowerW,
+    peakPowerW: peakPower.value,
+    peakPowerTimestampUs: peakPower.timestampUs,
+    peakCurrentA: peakCurrent.value,
+    peakCurrentTimestampUs: peakCurrent.timestampUs,
+  };
+}
+
+export function analyzeSupplyLimitMotorGroups(
+  dataset: EnergyLogDataset,
+  requested: Partial<TimeRange> = {},
+): SupplyLimitMotorGroupMetrics[] | undefined {
+  const groups = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset);
+  if (!groups) return undefined;
+  const range = resolveRange(dataset, requested);
+  const robotEnergyWh = analyzeEnergyRange(dataset, range).totals.energyWh;
+  return groups
+    .map((group) => ({
+      motorGroupId: group.id,
+      subsystemId: group.subsystemId,
+      subsystemName: group.subsystemName,
+      leaderName: group.leaderName,
+      motorNames: group.motorNames,
+      motorType: group.motorType,
+      motorCount: group.motorCount,
+      baseline: metricSnapshot(dataset, group, range),
+      robotPositiveInputRatio: robotEnergyWh > 0
+        ? positivePowerEnergyInRange(group.powerW, range) / robotEnergyWh
+        : null,
+      ...(!groupHasUsableData(group, range)
+        ? { unavailableReason: "该电机组在当前范围内没有完整的 Supply Current 与功率区间。" }
+        : {}),
+    }))
+    .sort((left, right) =>
+      right.baseline.energyWh - left.baseline.energyWh ||
+      left.motorGroupId.localeCompare(right.motorGroupId),
+    );
 }
 
 function heapPush(heap: TimestampCursor[], cursor: TimestampCursor): void {
@@ -325,7 +370,7 @@ function heapPop(heap: TimestampCursor[]): TimestampCursor | undefined {
 }
 
 function forEachMergedTimestamp(
-  series: readonly NumericSeries[],
+  series: readonly Pick<NumericSeries, "timestampsUs">[],
   startUs: number,
   endUs: number,
   visit: (timestampUs: number) => void,
@@ -336,18 +381,13 @@ function forEachMergedTimestamp(
   for (const item of series) {
     const index = upperBound(item.timestampsUs, startUs);
     if (index < item.timestampsUs.length && item.timestampsUs[index] < endUs) {
-      heapPush(heap, {
-        series: item.timestampsUs,
-        index,
-        timestampUs: item.timestampsUs[index],
-      });
+      heapPush(heap, { series: item.timestampsUs, index, timestampUs: item.timestampsUs[index] });
     }
   }
-
   let previousTimestampUs = startUs;
   while (heap.length > 0) {
     const cursor = heapPop(heap)!;
-    if (previousTimestampUs !== cursor.timestampUs) {
+    if (cursor.timestampUs !== previousTimestampUs) {
       previousTimestampUs = cursor.timestampUs;
       visit(cursor.timestampUs);
     }
@@ -373,40 +413,55 @@ function hasNegativeValue(series: NumericSeries, range: TimeRange): boolean {
 function warning(
   code: SupplyLimitWarningCode,
   message: string,
-  nodeId?: string,
+  motorGroupId?: string,
   details?: Record<string, unknown>,
 ): SupplyLimitWarning {
-  return { code, message, nodeId, details };
+  return { code, message, motorGroupId, details };
 }
 
 function sourceQualityWarnings(dataset: EnergyLogDataset): SupplyLimitWarning[] {
   const mappings: Partial<Record<string, [SupplyLimitWarningCode, string]>> = {
     NONFINITE_VALUE_DROPPED: [
       "SOURCE_NONFINITE_DROPPED",
-      "源日志包含已丢弃的非有限样本，限流估算置信度降低。",
+      "源日志包含非有限样本；对应区间不会凭空补值。",
     ],
-    TIME_GAP: ["SOURCE_TIME_GAP", "源日志包含时间断层，限流估算置信度降低。"],
+    TIME_GAP: ["SOURCE_TIME_GAP", "源日志包含时间断层，结果仅覆盖实际记录区间。"],
     PARTIAL_SUBSERIES: [
       "SOURCE_PARTIAL_SUBSERIES",
-      "源日志包含不完整的 EnergyLogger 子序列；这些路径不会参与估算。",
+      "源日志包含不完整的 EnergyLogger 子序列；对应区间不会参与扣减。",
     ],
   };
   const counts = new Map<string, number>();
   for (const issue of dataset.quality.issues) {
     if (mappings[issue.code]) counts.set(issue.code, (counts.get(issue.code) ?? 0) + 1);
   }
-  const result: SupplyLimitWarning[] = [];
-  for (const [sourceCode, count] of counts) {
+  return [...counts].map(([sourceCode, count]) => {
     const [code, message] = mappings[sourceCode]!;
-    result.push(warning(code, message, undefined, { sourceCode, count }));
-  }
-  return result;
+    return warning(code, message, undefined, { sourceCode, count });
+  });
 }
 
-function normalizedNonnegative(value: number, tolerance: number): number | undefined {
-  if (value >= 0) return value;
-  if (value >= -tolerance) return 0;
-  return undefined;
+function updateTargetAtTimestamp(target: ActiveTarget, timestampUs: number): void {
+  const currentA = advanceHeldNumericCursor(target.currentCursor, timestampUs);
+  const powerW = advanceHeldNumericCursor(target.powerCursor, timestampUs);
+  if (!Number.isFinite(currentA) || !Number.isFinite(powerW)) {
+    target.removedCurrentA = 0;
+    target.sawNonfinite = true;
+    return;
+  }
+  const scale = currentScale(currentA, target.input.limitA);
+  const estimatedCurrentA = currentA > 0 ? Math.min(currentA, target.input.limitA) : currentA;
+  const estimatedPowerW = powerW > 0 ? powerW * scale : powerW;
+  target.removedCurrentA = currentA - estimatedCurrentA;
+  if (target.removedCurrentA > CURRENT_TOLERANCE_A) target.triggered = true;
+  if (estimatedCurrentA > target.estimatedPeakCurrentA) {
+    target.estimatedPeakCurrentA = estimatedCurrentA;
+    target.estimatedPeakCurrentTimestampUs = timestampUs;
+  }
+  if (estimatedPowerW > target.estimatedPeakPowerW) {
+    target.estimatedPeakPowerW = estimatedPowerW;
+    target.estimatedPeakPowerTimestampUs = timestampUs;
+  }
 }
 
 export function estimateSupplyCurrentLimits(
@@ -415,61 +470,61 @@ export function estimateSupplyCurrentLimits(
 ): SupplyLimitEstimate {
   const validationIssues = validateSupplyCurrentLimits(dataset, options.limits);
   if (validationIssues.length > 0) throw new SupplyLimitValidationError(validationIssues);
-
+  const groups = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)!;
+  const groupsById = new Map(groups.map((group) => [group.id, group]));
   const range = resolveRange(dataset, options.range);
-  const baselineRange = analyzeEnergyRange(dataset, range);
-  const baselineByNode = new Map(baselineRange.subsystems.map((metrics) => [metrics.id, metrics]));
-  const nodesById = new Map(dataset.subsystems.map((node) => [node.id, node]));
   const limits = options.limits
     .map((input) => ({ ...input }))
-    .sort((left, right) => left.nodeId.localeCompare(right.nodeId));
+    .sort((left, right) => left.motorGroupId.localeCompare(right.motorGroupId));
   const activeInputs = limits.filter(isActive);
-  const timestampSeries: NumericSeries[] = [
-    dataset.series.totalCurrentA,
-    dataset.series.totalPowerW,
-    dataset.series.totalEnergyWh,
-  ];
-  for (const input of activeInputs) {
-    const node = nodesById.get(input.nodeId)!;
-    timestampSeries.push(node.currentA, node.powerW, node.energyWh);
-  }
+  const unavailableIssues = activeInputs.flatMap((input, inputIndex) => {
+    const group = groupsById.get(input.motorGroupId)!;
+    return groupHasUsableData(group, range)
+      ? []
+      : [{
+          code: "MOTOR_GROUP_DATA_UNAVAILABLE" as const,
+          message: `${groupLabel(group)} 在当前范围内没有完整的 Supply Current 与功率区间。`,
+          inputIndex,
+          motorGroupIds: [group.id],
+        }];
+  });
+  if (unavailableIssues.length > 0) throw new SupplyLimitValidationError(unavailableIssues);
+
+  const baselineRange = analyzeEnergyRange(dataset, range);
+  const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
+  const enabledDurationSeconds = enabledIntervals.reduce(
+    (sum, interval) => sum + interval.durationSeconds,
+    0,
+  );
   const targets: ActiveTarget[] = activeInputs.map((input) => {
-    const node = nodesById.get(input.nodeId)!;
+    const group = groupsById.get(input.motorGroupId)!;
     const targetWarnings: SupplyLimitWarning[] = [];
     if (input.limitA === 0) {
-      targetWarnings.push(
-        warning(
-          "THEORETICAL_SHUTDOWN",
-          `${node.rawPath} 使用 0 A 上限，仅代表理论关闭场景。`,
-          node.id,
-        ),
-      );
+      targetWarnings.push(warning(
+        "THEORETICAL_SHUTDOWN",
+        `${groupLabel(group)} 使用 0 A 电机组上限，仅代表理论关闭场景。`,
+        group.id,
+      ));
     }
-    if (node.childrenIds.length > 0) {
-      targetWarnings.push(
-        warning(
-          "CONFIRMED_AGGREGATE",
-          `${node.rawPath} 按用户确认的同构电机组聚合电流估算。`,
-          node.id,
-        ),
-      );
+    if (hasNegativeValue(group.currentA, range) || hasNegativeValue(group.powerW, range)) {
+      targetWarnings.push(warning(
+        "SOURCE_NEGATIVE_VALUE",
+        `${groupLabel(group)} 包含负 Supply Current 或负功率；这些样本保持原样，不参与正向限流扣减。`,
+        group.id,
+      ));
     }
-    if (
-      hasNegativeValue(node.currentA, range) ||
-      hasNegativeValue(node.powerW, range) ||
-      hasNegativeValue(node.energyWh, range)
-    ) {
-      targetWarnings.push(
-        warning(
-          "SOURCE_NEGATIVE_VALUE",
-          `${node.rawPath} 包含负值；负电流与负功率样本保持原样，累计能量仍只处理正增量，并降低估算置信度。`,
-          node.id,
-        ),
-      );
-    }
+    const limitedEnergy = limitedGroupEnergyInRange(group, input.limitA, range);
+    const estimatedEnabledEnergyWh = dataset.series.enabled && enabledDurationSeconds > 0
+      ? enabledIntervals.reduce(
+          (sum, interval) =>
+            sum + limitedGroupEnergyInRange(group, input.limitA, interval).estimatedWh,
+          0,
+        )
+      : limitedEnergy.estimatedWh;
     return {
       input,
-      node,
+      group,
+      baseline: metricSnapshot(dataset, group, range),
       warnings: targetWarnings,
       removedCurrentA: 0,
       estimatedPeakCurrentA: Number.NEGATIVE_INFINITY,
@@ -479,308 +534,210 @@ export function estimateSupplyCurrentLimits(
       clippedDurationSeconds: 0,
       ampSecondsRemoved: 0,
       triggered: false,
-      positivePowerWithoutCurrent: false,
-      energyCursor: createEnergyCursor(node.energyWh, range.startUs, node.currentA, input.limitA),
-      estimatedEnabledEnergyWh: 0,
-      currentCursor: createHeldNumericCursor(node.currentA, range.startUs),
-      powerCursor: createHeldNumericCursor(node.powerW, range.startUs),
+      sawNonfinite: limitedEnergy.sawNonfinite,
+      estimatedEnergyWh: limitedEnergy.estimatedWh,
+      estimatedEnabledEnergyWh,
+      currentCursor: createHeldNumericCursor(group.currentA, range.startUs, Number.NaN),
+      powerCursor: createHeldNumericCursor(group.powerW, range.startUs, Number.NaN),
     };
   });
 
-  const totalEnergyCursor = createEnergyCursor(dataset.series.totalEnergyWh, range.startUs);
-  const totalCurrentCursor = createHeldNumericCursor(dataset.series.totalCurrentA, range.startUs);
-  const totalPowerCursor = createHeldNumericCursor(dataset.series.totalPowerW, range.startUs);
+  for (const target of targets) {
+    let previousTimestampUs: number | undefined;
+    forEachMergedTimestamp(
+      [target.group.currentA, target.group.powerW],
+      range.startUs,
+      range.endUs,
+      (timestampUs) => {
+        if (previousTimestampUs !== undefined && target.removedCurrentA > CURRENT_TOLERANCE_A) {
+          const durationSeconds = (timestampUs - previousTimestampUs) / 1_000_000;
+          target.clippedDurationSeconds += durationSeconds;
+          target.ampSecondsRemoved += target.removedCurrentA * durationSeconds;
+        }
+        updateTargetAtTimestamp(target, timestampUs);
+        previousTimestampUs = timestampUs;
+      },
+    );
+  }
+
   let robotEstimateAvailable = true;
   const unavailableReasons = new Set<string>();
   let estimatedPeakCurrentA = Number.NEGATIVE_INFINITY;
   let estimatedPeakCurrentTimestampUs = range.startUs;
   let estimatedPeakPowerW = Number.NEGATIVE_INFINITY;
   let estimatedPeakPowerTimestampUs = range.startUs;
-  let clippedUnionDurationSeconds = 0;
-  let previousTimestampUs: number | undefined;
-
+  let estimatedTotalEnergyWh = 0;
+  let estimatedTotalEnabledEnergyWh = 0;
+  let previousRobotTimestampUs: number | undefined;
+  let previousEstimatedPowerW = 0;
+  const totalCurrentCursor = createHeldNumericCursor(dataset.series.totalCurrentA, range.startUs);
+  const totalPowerCursor = createHeldNumericCursor(dataset.series.totalPowerW, range.startUs);
+  const robotGroupCursors = targets.map((target) => ({
+    target,
+    current: createHeldNumericCursor(target.group.currentA, range.startUs, Number.NaN),
+    power: createHeldNumericCursor(target.group.powerW, range.startUs, Number.NaN),
+  }));
   forEachMergedTimestamp(
-    timestampSeries,
+    [
+      dataset.series.totalCurrentA,
+      dataset.series.totalPowerW,
+      ...(dataset.series.enabled
+        ? [{ timestampsUs: dataset.series.enabled.timestampsUs }]
+        : []),
+    ],
     range.startUs,
     range.endUs,
     (timestampUs) => {
-      if (previousTimestampUs !== undefined) {
-        const durationSeconds = (timestampUs - previousTimestampUs) / 1_000_000;
-        let anyTargetClipped = false;
-        for (const target of targets) {
-          if (target.removedCurrentA <= CURRENT_TOLERANCE_A) continue;
-          anyTargetClipped = true;
-          target.clippedDurationSeconds += durationSeconds;
-          target.ampSecondsRemoved += target.removedCurrentA * durationSeconds;
+      if (previousRobotTimestampUs !== undefined) {
+        const durationHours = (timestampUs - previousRobotTimestampUs) / 3_600_000_000;
+        const positiveEnergyWh = Math.max(0, previousEstimatedPowerW) * durationHours;
+        estimatedTotalEnergyWh += positiveEnergyWh;
+        if (isEnabledAt(dataset, previousRobotTimestampUs)) {
+          estimatedTotalEnabledEnergyWh += positiveEnergyWh;
         }
-        if (anyTargetClipped) clippedUnionDurationSeconds += durationSeconds;
       }
-
       const totalCurrentA = advanceHeldNumericCursor(totalCurrentCursor, timestampUs);
       const totalPowerW = advanceHeldNumericCursor(totalPowerCursor, timestampUs);
-
+      if (!Number.isFinite(totalCurrentA) || !Number.isFinite(totalPowerW)) {
+        if (timestampUs < range.endUs) {
+          robotEstimateAvailable = false;
+          unavailableReasons.add("robot-nonfinite");
+        }
+        previousRobotTimestampUs = timestampUs;
+        previousEstimatedPowerW = 0;
+        return;
+      }
       let removedCurrentA = 0;
       let removedPowerW = 0;
-      for (const target of targets) {
-        const currentA = advanceHeldNumericCursor(target.currentCursor, timestampUs);
-        const powerW = advanceHeldNumericCursor(target.powerCursor, timestampUs);
-        const scale = currentScale(currentA, target.input.limitA);
-        const estimatedCurrentA = currentA > 0
-          ? Math.min(currentA, target.input.limitA)
-          : currentA;
-        const estimatedPowerW = powerW < 0 ? powerW : powerW * scale;
-        target.removedCurrentA = currentA - estimatedCurrentA;
-        removedCurrentA += target.removedCurrentA;
-        removedPowerW += powerW - estimatedPowerW;
-        if (target.removedCurrentA > CURRENT_TOLERANCE_A) target.triggered = true;
-        if (currentA <= 0 && powerW > 0) target.positivePowerWithoutCurrent = true;
-        if (estimatedCurrentA > target.estimatedPeakCurrentA) {
-          target.estimatedPeakCurrentA = estimatedCurrentA;
-          target.estimatedPeakCurrentTimestampUs = timestampUs;
-        }
-        if (estimatedPowerW > target.estimatedPeakPowerW) {
-          target.estimatedPeakPowerW = estimatedPowerW;
-          target.estimatedPeakPowerTimestampUs = timestampUs;
-        }
-        advanceEnergyCursor(target.energyCursor, timestampUs);
+      for (const item of robotGroupCursors) {
+        const currentA = advanceHeldNumericCursor(item.current, timestampUs);
+        const powerW = advanceHeldNumericCursor(item.power, timestampUs);
+        if (!Number.isFinite(currentA) || !Number.isFinite(powerW)) continue;
+        const scale = currentScale(currentA, item.target.input.limitA);
+        if (currentA > 0) removedCurrentA += currentA - Math.min(currentA, item.target.input.limitA);
+        if (powerW > 0) removedPowerW += powerW - powerW * scale;
       }
-      advanceEnergyCursor(totalEnergyCursor, timestampUs);
-
       const rawEstimatedCurrentA = totalCurrentA - removedCurrentA;
       const rawEstimatedPowerW = totalPowerW - removedPowerW;
-      const currentTolerance = Math.max(
-        CURRENT_TOLERANCE_A,
-        Math.abs(totalCurrentA) * 1e-9,
-      );
-      const powerTolerance = Math.max(POWER_TOLERANCE_W, Math.abs(totalPowerW) * 1e-9);
-      const normalizedCurrentA = normalizedNonnegative(rawEstimatedCurrentA, currentTolerance);
-      const normalizedPowerW = normalizedNonnegative(rawEstimatedPowerW, powerTolerance);
-      if (normalizedCurrentA === undefined) {
-        robotEstimateAvailable = false;
-        unavailableReasons.add("current");
-      }
-      if (normalizedPowerW === undefined) {
-        robotEstimateAvailable = false;
-        unavailableReasons.add("power");
-      }
-      const estimatedTotalCurrentA = normalizedCurrentA ?? rawEstimatedCurrentA;
-      const estimatedTotalPowerW = normalizedPowerW ?? rawEstimatedPowerW;
-      if (estimatedTotalCurrentA > estimatedPeakCurrentA) {
-        estimatedPeakCurrentA = estimatedTotalCurrentA;
+      if (rawEstimatedCurrentA > estimatedPeakCurrentA) {
+        estimatedPeakCurrentA = rawEstimatedCurrentA;
         estimatedPeakCurrentTimestampUs = timestampUs;
       }
-      if (estimatedTotalPowerW > estimatedPeakPowerW) {
-        estimatedPeakPowerW = estimatedTotalPowerW;
+      if (rawEstimatedPowerW > estimatedPeakPowerW) {
+        estimatedPeakPowerW = rawEstimatedPowerW;
         estimatedPeakPowerTimestampUs = timestampUs;
       }
-
-      const savedEnergyWh = targets.reduce(
-        (sum, target) =>
-          sum + target.energyCursor.baselineWh - target.energyCursor.estimatedWh,
-        0,
-      );
-      const rawEstimatedEnergyWh = totalEnergyCursor.baselineWh - savedEnergyWh;
-      const energyTolerance = Math.max(
-        ENERGY_TOLERANCE_WH,
-        Math.abs(totalEnergyCursor.baselineWh) * 1e-9,
-      );
-      const normalizedEnergyWh = normalizedNonnegative(rawEstimatedEnergyWh, energyTolerance);
-      if (normalizedEnergyWh === undefined) {
-        robotEstimateAvailable = false;
-        unavailableReasons.add("energy");
-      }
-      previousTimestampUs = timestampUs;
+      previousRobotTimestampUs = timestampUs;
+      previousEstimatedPowerW = rawEstimatedPowerW;
     },
   );
 
-  const enabledIntervals = rangeIntersections(dataset.segments.enabled, range);
-  const enabledDurationSeconds = enabledIntervals.reduce(
-    (sum, interval) => sum + interval.durationSeconds,
-    0,
-  );
-  let estimatedTotalEnabledEnergyWh = 0;
-  if (dataset.series.enabled && enabledDurationSeconds > 0) {
-    const baselineTotalEnabledEnergyWh = enabledIntervals.reduce((sum, interval) => {
-      const cursor = createEnergyCursor(dataset.series.totalEnergyWh, interval.startUs);
-      advanceEnergyCursor(cursor, interval.endUs);
-      return sum + cursor.baselineWh;
-    }, 0);
-    let enabledEnergyRemovedWh = 0;
-    for (const target of targets) {
-      let targetBaselineEnabledWh = 0;
-      let targetEstimatedEnabledWh = 0;
-      for (const interval of enabledIntervals) {
-        const cursor = scaledEnergyInRange(
-          target.node.energyWh,
-          target.node.currentA,
-          target.input.limitA,
-          interval,
-        );
-        targetBaselineEnabledWh += cursor.baselineWh;
-        targetEstimatedEnabledWh += cursor.estimatedWh;
-      }
-      target.estimatedEnabledEnergyWh = targetEstimatedEnabledWh;
-      enabledEnergyRemovedWh += targetBaselineEnabledWh - targetEstimatedEnabledWh;
-    }
-    const rawEstimatedEnabledEnergyWh = baselineTotalEnabledEnergyWh - enabledEnergyRemovedWh;
-    const normalized = normalizedNonnegative(
-      rawEstimatedEnabledEnergyWh,
-      Math.max(ENERGY_TOLERANCE_WH, Math.abs(baselineTotalEnabledEnergyWh) * 1e-9),
-    );
-    if (normalized === undefined) {
-      robotEstimateAvailable = false;
-      unavailableReasons.add("enabled-energy");
-    }
-    estimatedTotalEnabledEnergyWh = normalized ?? rawEstimatedEnabledEnergyWh;
-  }
-
   const targetEstimates: SupplyLimitTargetEstimate[] = targets.map((target) => {
-    const baseline = baselineByNode.get(target.node.id)!;
-    const energySavedWh = Math.max(
-      0,
-      target.energyCursor.baselineWh - target.energyCursor.estimatedWh,
-    );
-    const estimatedEnergyWh = target.energyCursor.estimatedWh;
+    const estimatedEnergyWh = target.estimatedEnergyWh;
+    const energySavedWh = Math.max(0, target.baseline.energyWh - estimatedEnergyWh);
     if (!target.triggered) {
-      target.warnings.push(
-        warning(
-          "LIMIT_NOT_TRIGGERED",
-          `${target.node.rawPath} 在当前范围内没有超过 ${target.input.limitA} A。`,
-          target.node.id,
-        ),
-      );
+      target.warnings.push(warning(
+        "LIMIT_NOT_TRIGGERED",
+        `${groupLabel(target.group)} 在当前范围内没有超过 ${target.input.limitA} A。`,
+        target.group.id,
+      ));
     }
-    if (target.energyCursor.resetCount > 0) {
-      target.warnings.push(
-        warning(
-          "SOURCE_ENERGY_RESET",
-          `${target.node.rawPath} 在当前范围内发生累计能量重置，已按分段正增量估算。`,
-          target.node.id,
-          { resetCount: target.energyCursor.resetCount },
-        ),
-      );
-    }
-    if (
-      target.positivePowerWithoutCurrent ||
-      target.energyCursor.unmatchedEnergyWh > ENERGY_TOLERANCE_WH
-    ) {
-      target.warnings.push(
-        warning(
-          "SOURCE_CURRENT_MISMATCH",
-          `${target.node.rawPath} 存在电流不大于 0 但功率或能量仍增加的区段；这些区段保持原样，不计节省。`,
-          target.node.id,
-          { unmatchedEnergyWh: target.energyCursor.unmatchedEnergyWh },
-        ),
-      );
+    if (target.sawNonfinite) {
+      target.warnings.push(warning(
+        "SOURCE_NONFINITE_DROPPED",
+        `${groupLabel(target.group)} 存在不完整样本；对应区间保持原整机值，不参与扣减。`,
+        target.group.id,
+      ));
     }
     const estimatedAveragePowerW = dataset.series.enabled
       ? enabledDurationSeconds > 0
-        ? (target.estimatedEnabledEnergyWh * 3600) / enabledDurationSeconds
+        ? target.estimatedEnabledEnergyWh * 3600 / enabledDurationSeconds
         : 0
       : range.durationSeconds > 0
-        ? (estimatedEnergyWh * 3600) / range.durationSeconds
+        ? estimatedEnergyWh * 3600 / range.durationSeconds
         : 0;
-    const baselineSnapshot: SupplyLimitMetricSnapshot = {
-      energyWh: baseline.energyWh,
-      averagePowerW: baseline.averagePowerW,
-      peakPowerW: baseline.peakPowerW,
-      peakPowerTimestampUs: baseline.peakPowerTimestampUs,
-      peakCurrentA: baseline.peakCurrentA,
-      peakCurrentTimestampUs: baseline.peakCurrentTimestampUs,
-    };
-    const estimatedSnapshot: SupplyLimitMetricSnapshot = {
-      energyWh: estimatedEnergyWh,
-      averagePowerW: estimatedAveragePowerW,
-      peakPowerW: target.estimatedPeakPowerW,
-      peakPowerTimestampUs: target.estimatedPeakPowerTimestampUs,
-      peakCurrentA: target.estimatedPeakCurrentA,
-      peakCurrentTimestampUs: target.estimatedPeakCurrentTimestampUs,
-    };
     return {
-      nodeId: target.node.id,
-      rawPath: target.node.rawPath,
-      displayName: target.node.displayName,
-      kind: target.node.childrenIds.length > 0 ? "confirmed-aggregate" : "terminal",
+      motorGroupId: target.group.id,
+      subsystemId: target.group.subsystemId,
+      subsystemName: target.group.subsystemName,
+      leaderName: target.group.leaderName,
+      motorNames: target.group.motorNames,
+      motorType: target.group.motorType,
+      motorCount: target.group.motorCount,
       limitA: target.input.limitA,
-      baseline: baselineSnapshot,
-      estimated: estimatedSnapshot,
+      baseline: target.baseline,
+      estimated: {
+        energyWh: estimatedEnergyWh,
+        averagePowerW: estimatedAveragePowerW,
+        peakPowerW: Number.isFinite(target.estimatedPeakPowerW)
+          ? target.estimatedPeakPowerW
+          : target.baseline.peakPowerW,
+        peakPowerTimestampUs: target.estimatedPeakPowerTimestampUs,
+        peakCurrentA: Number.isFinite(target.estimatedPeakCurrentA)
+          ? target.estimatedPeakCurrentA
+          : target.baseline.peakCurrentA,
+        peakCurrentTimestampUs: target.estimatedPeakCurrentTimestampUs,
+      },
       energySavedWh,
-      energySavedPercent: baseline.energyWh > 0 ? (energySavedWh / baseline.energyWh) * 100 : null,
+      energySavedPercent: target.baseline.energyWh > 0
+        ? energySavedWh / target.baseline.energyWh * 100
+        : null,
       clippedDurationSeconds: target.clippedDurationSeconds,
-      clippedRangeFraction:
-        range.durationSeconds > 0
-          ? target.clippedDurationSeconds / range.durationSeconds
-          : 0,
+      clippedRangeFraction: range.durationSeconds > 0
+        ? target.clippedDurationSeconds / range.durationSeconds
+        : 0,
       ampSecondsRemoved: target.ampSecondsRemoved,
       warnings: target.warnings,
     };
   });
 
-  const totalEnergySavedWh = targetEstimates.reduce(
+  const targetEnergySavedWh = targetEstimates.reduce(
     (sum, target) => sum + target.energySavedWh,
     0,
   );
-  const rawEstimatedTotalEnergyWh = baselineRange.totals.energyWh - totalEnergySavedWh;
-  const estimatedTotalEnergyWh = normalizedNonnegative(
-    rawEstimatedTotalEnergyWh,
-    Math.max(ENERGY_TOLERANCE_WH, Math.abs(baselineRange.totals.energyWh) * 1e-9),
-  );
-  if (estimatedTotalEnergyWh === undefined) {
-    robotEstimateAvailable = false;
-    unavailableReasons.add("energy-total");
-  }
+  const robotEnergySavedWh = Math.max(0, baselineRange.totals.energyWh - estimatedTotalEnergyWh);
 
   const globalWarnings = sourceQualityWarnings(dataset);
   if (targets.length === 0) {
-    globalWarnings.push(
-      warning("NO_ACTIVE_LIMITS", "当前方案没有启用的 Supply 电流限流目标。"),
-    );
+    globalWarnings.push(warning(
+      "NO_ACTIVE_LIMITS",
+      "当前方案没有启用的 Leader 电机组 Supply Current 限流目标。",
+    ));
   }
   if (!baselineRange.quality.reconciliation.withinTolerance) {
-    globalWarnings.push(
-      warning(
-        "SOURCE_RECONCILIATION_MISMATCH",
-        "当前范围内整机能量与顶层子系统能量不调和，整机估算置信度降低。",
-        undefined,
-        { ...baselineRange.quality.reconciliation },
-      ),
-    );
+    globalWarnings.push(warning(
+      "SOURCE_RECONCILIATION_MISMATCH",
+      "当前范围内整机能量数据不调和，整机估算不可用。",
+      undefined,
+      { ...baselineRange.quality.reconciliation },
+    ));
+    robotEstimateAvailable = false;
+    unavailableReasons.add("reconciliation");
   }
   if (!robotEstimateAvailable) {
-    globalWarnings.push(
-      warning(
-        "ROBOT_ESTIMATE_UNAVAILABLE",
-        "目标节点扣减后出现明显负的整机电流、功率或能量；保留逐目标结果，但整机估算不可用。",
-        undefined,
-        { reasons: [...unavailableReasons].sort() },
-      ),
-    );
+    globalWarnings.push(warning(
+      "ROBOT_ESTIMATE_UNAVAILABLE",
+      "电机组扣减后无法与整机数据可靠调和；保留逐电机组结果，但整机估算不可用。",
+      undefined,
+      { reasons: [...unavailableReasons].sort() },
+    ));
   }
   for (const target of targets) globalWarnings.push(...target.warnings);
 
-  const baselineTotals: SupplyLimitMetricSnapshot = {
-    energyWh: baselineRange.totals.energyWh,
-    averagePowerW: baselineRange.totals.averagePowerW,
-    peakPowerW: baselineRange.totals.peakPowerW,
-    peakPowerTimestampUs: baselineRange.totals.peakPowerTimestampUs,
-    peakCurrentA: baselineRange.totals.peakCurrentA,
-    peakCurrentTimestampUs: baselineRange.totals.peakCurrentTimestampUs,
-  };
   const estimatedAveragePowerW = dataset.series.enabled
     ? enabledDurationSeconds > 0
-      ? (estimatedTotalEnabledEnergyWh * 3600) / enabledDurationSeconds
+      ? estimatedTotalEnabledEnergyWh * 3600 / enabledDurationSeconds
       : 0
     : range.durationSeconds > 0 && estimatedTotalEnergyWh !== undefined
-      ? (estimatedTotalEnergyWh * 3600) / range.durationSeconds
+      ? estimatedTotalEnergyWh * 3600 / range.durationSeconds
       : 0;
-  const estimatedTotals: SupplyLimitMetricSnapshot | undefined = robotEstimateAvailable &&
-      estimatedTotalEnergyWh !== undefined
+  const estimatedTotals = robotEstimateAvailable
     ? {
         energyWh: estimatedTotalEnergyWh,
         averagePowerW: estimatedAveragePowerW,
-        peakPowerW: estimatedPeakPowerW,
+        peakPowerW: Number.isFinite(estimatedPeakPowerW) ? estimatedPeakPowerW : 0,
         peakPowerTimestampUs: estimatedPeakPowerTimestampUs,
-        peakCurrentA: estimatedPeakCurrentA,
+        peakCurrentA: Number.isFinite(estimatedPeakCurrentA) ? estimatedPeakCurrentA : 0,
         peakCurrentTimestampUs: estimatedPeakCurrentTimestampUs,
       }
     : undefined;
@@ -791,14 +748,20 @@ export function estimateSupplyCurrentLimits(
     targets: targetEstimates,
     totals: {
       activeTargetCount: targets.length,
-      baseline: baselineTotals,
+      baseline: {
+        energyWh: baselineRange.totals.energyWh,
+        averagePowerW: baselineRange.totals.averagePowerW,
+        peakPowerW: baselineRange.totals.peakPowerW,
+        peakPowerTimestampUs: baselineRange.totals.peakPowerTimestampUs,
+        peakCurrentA: baselineRange.totals.peakCurrentA,
+        peakCurrentTimestampUs: baselineRange.totals.peakCurrentTimestampUs,
+      },
       estimated: estimatedTotals,
-      energySavedWh: totalEnergySavedWh,
-      energySavedPercent:
-        robotEstimateAvailable && baselineRange.totals.energyWh > 0
-          ? (totalEnergySavedWh / baselineRange.totals.energyWh) * 100
-          : null,
-      clippedUnionDurationSeconds,
+      energySavedWh: robotEstimateAvailable ? robotEnergySavedWh : targetEnergySavedWh,
+      energySavedPercent: robotEstimateAvailable && baselineRange.totals.energyWh > 0
+        ? robotEnergySavedWh / baselineRange.totals.energyWh * 100
+        : null,
+      clippedUnionDurationSeconds: unionClippedDuration(targets, range),
       clippedDurationSumSeconds: targetEstimates.reduce(
         (sum, target) => sum + target.clippedDurationSeconds,
         0,
@@ -807,4 +770,34 @@ export function estimateSupplyCurrentLimits(
     },
     warnings: globalWarnings,
   };
+}
+
+function unionClippedDuration(
+  targets: readonly ActiveTarget[],
+  range: TimeRange,
+): number {
+  if (targets.length === 0 || range.endUs <= range.startUs) return 0;
+  const cursors = targets.map((target) => ({
+    target,
+    current: createHeldNumericCursor(target.group.currentA, range.startUs, Number.NaN),
+  }));
+  let previousTimestampUs: number | undefined;
+  let anyClipped = false;
+  let durationSeconds = 0;
+  forEachMergedTimestamp(
+    targets.map((target) => target.group.currentA),
+    range.startUs,
+    range.endUs,
+    (timestampUs) => {
+      if (previousTimestampUs !== undefined && anyClipped) {
+        durationSeconds += (timestampUs - previousTimestampUs) / 1_000_000;
+      }
+      anyClipped = cursors.some(({ target, current }) => {
+        const value = advanceHeldNumericCursor(current, timestampUs);
+        return Number.isFinite(value) && value > target.input.limitA + CURRENT_TOLERANCE_A;
+      });
+      previousTimestampUs = timestampUs;
+    },
+  );
+  return durationSeconds;
 }

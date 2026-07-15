@@ -26,7 +26,7 @@ export function SubsystemShare({
     <section className="card flex min-h-0 flex-col overflow-hidden" aria-labelledby="subsystem-share-title">
       <div className="flex items-center justify-between border-b border-line px-4 py-3">
         <h2 id="subsystem-share-title" className="text-sm font-semibold text-ink">
-          子系统能量占比
+          能量占比
         </h2>
         <span className="text-[10px] text-ink-faint">能量（Wh） · 同级占比</span>
       </div>

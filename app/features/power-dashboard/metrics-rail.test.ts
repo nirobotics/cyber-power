@@ -34,7 +34,7 @@ describe("MetricsRail", () => {
     expect(markup).not.toContain(">持续时间<");
   });
 
-  it("labels every V2 electrical total as registered-motor scope", () => {
+  it("labels every V2 electrical total as a whole-robot metric without duplicate prefixes", () => {
     const analysis = {
       range: { startUs: 0, endUs: 1_000_000, durationSeconds: 1 },
       totals: {
@@ -59,9 +59,12 @@ describe("MetricsRail", () => {
       onLocatePeakCurrent: () => undefined,
     }));
 
-    expect(markup).toContain("已注册电机能量");
-    expect(markup).toContain("已注册电机平均功率");
-    expect(markup).toContain("已注册电机峰值功率");
-    expect(markup).toContain("已注册电机合计电流峰值");
+    expect(markup).toContain("整机能量");
+    expect(markup).toContain("整机平均功率");
+    expect(markup).toContain("整机峰值功率");
+    expect(markup).toContain("整机峰值电流");
+    expect(markup).toContain('aria-label="定位整机峰值功率时间"');
+    expect(markup).toContain('aria-label="定位整机峰值电流时间"');
+    expect(markup).not.toContain("整机整机");
   });
 });

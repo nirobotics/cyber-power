@@ -274,13 +274,10 @@ export interface RangeAnalysis {
 }
 
 export interface SupplyCurrentLimitInput {
-  nodeId: string;
+  motorGroupId: string;
   limitA: number;
-  aggregateConfirmed?: boolean;
   enabled?: boolean;
 }
-
-export type SupplyLimitNodeKind = "terminal" | "confirmed-aggregate";
 
 export interface SupplyLimitMetricSnapshot {
   energyWh: number;
@@ -295,8 +292,6 @@ export type SupplyLimitWarningCode =
   | "NO_ACTIVE_LIMITS"
   | "LIMIT_NOT_TRIGGERED"
   | "THEORETICAL_SHUTDOWN"
-  | "CONFIRMED_AGGREGATE"
-  | "SOURCE_ENERGY_RESET"
   | "SOURCE_NONFINITE_DROPPED"
   | "SOURCE_TIME_GAP"
   | "SOURCE_PARTIAL_SUBSERIES"
@@ -308,30 +303,33 @@ export type SupplyLimitWarningCode =
 export interface SupplyLimitWarning {
   code: SupplyLimitWarningCode;
   message: string;
-  nodeId?: string;
+  motorGroupId?: string;
   details?: Record<string, unknown>;
 }
 
 export type SupplyLimitValidationCode =
-  | "UNKNOWN_NODE"
+  | "V2_MOTOR_GROUPS_REQUIRED"
+  | "UNKNOWN_MOTOR_GROUP"
+  | "MOTOR_GROUP_DATA_UNAVAILABLE"
   | "INVALID_LIMIT"
   | "DUPLICATE_TARGET"
-  | "AGGREGATE_CONFIRMATION_REQUIRED"
-  | "HIERARCHY_CONFLICT"
   | "INVALID_RANGE";
 
 export interface SupplyLimitValidationIssue {
   code: SupplyLimitValidationCode;
   message: string;
   inputIndex?: number;
-  nodeIds?: string[];
+  motorGroupIds?: string[];
 }
 
 export interface SupplyLimitTargetEstimate {
-  nodeId: string;
-  rawPath: string;
-  displayName: string;
-  kind: SupplyLimitNodeKind;
+  motorGroupId: string;
+  subsystemId: string;
+  subsystemName: string;
+  leaderName: string;
+  motorNames: readonly string[];
+  motorType: import("./v2-contract").EnergyLoggerV2MotorType;
+  motorCount: number;
   limitA: number;
   baseline: SupplyLimitMetricSnapshot;
   estimated: SupplyLimitMetricSnapshot;
@@ -341,6 +339,19 @@ export interface SupplyLimitTargetEstimate {
   clippedRangeFraction: number;
   ampSecondsRemoved: number;
   warnings: SupplyLimitWarning[];
+}
+
+export interface SupplyLimitMotorGroupMetrics {
+  motorGroupId: string;
+  subsystemId: string;
+  subsystemName: string;
+  leaderName: string;
+  motorNames: readonly string[];
+  motorType: import("./v2-contract").EnergyLoggerV2MotorType;
+  motorCount: number;
+  baseline: SupplyLimitMetricSnapshot;
+  robotPositiveInputRatio: number | null;
+  unavailableReason?: string;
 }
 
 export interface SupplyLimitTotals {

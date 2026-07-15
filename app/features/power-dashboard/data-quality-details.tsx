@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, FileCheck2, TriangleAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, TriangleAlert } from "lucide-react";
 import type { EnergyLogDataset } from "../log-analysis/core";
 import { formatBytes, formatNumber } from "./format";
 import { localizeLogIssue } from "./issue-localization";
@@ -13,11 +13,7 @@ export function DataQualityDetails({ dataset }: { dataset: EnergyLogDataset }) {
 
   return (
     <div className="grid gap-3 lg:grid-cols-[20rem_minmax(0,1fr)]">
-      <aside className="card h-fit overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-line px-4 py-3">
-          <FileCheck2 className="size-4 text-brand" aria-hidden />
-          <h2 className="text-sm font-semibold text-ink">可信日志范围</h2>
-        </div>
+      <aside className="card h-fit overflow-hidden" aria-label="日志信息">
         <dl className="grid grid-cols-[7rem_minmax(0,1fr)] gap-x-3 gap-y-3 px-4 py-4 text-xs">
           <dt className="text-ink-dim">WPILOG 版本</dt>
           <dd className="min-w-0 text-left font-mono text-ink">
@@ -65,16 +61,6 @@ export function DataQualityDetails({ dataset }: { dataset: EnergyLogDataset }) {
               <dt className="text-ink-dim">电机数量</dt>
               <dd className="min-w-0 text-left font-mono text-ink">
                 {formatNumber(v2MotorCount, 0)}
-              </dd>
-              <dt className="text-ink-dim">整机指标口径</dt>
-              <dd className="min-w-0 text-left text-ink">
-                已注册电机合计电流 × 电池电压
-              </dd>
-              <dt className="text-ink-dim">Stator Current 语义</dt>
-              <dd className="min-w-0 text-left text-ink">
-                {v2.contract.contractVersion === "2.3"
-                  ? "带符号（驱动 / 再生制动；后者不代表电池净回充）"
-                  : "无符号幅值"}
               </dd>
             </>
           ) : null}

@@ -152,6 +152,8 @@ describe("V2AnalysisSections", () => {
     expect(followerMotorNames(group)).toEqual(["right"]);
 
     const html = renderPage(analysisFixture(), "2.3");
+    expect(html).toContain('aria-label="电机分析"');
+    expect(html).not.toContain("电机效率与减速比推荐");
     expect(html).toContain("Leader 电机");
     expect(html).toContain('title="right"');
     expect(html).toContain(">right</span>");
@@ -186,27 +188,40 @@ describe("V2AnalysisSections", () => {
     ]);
   });
 
-  it("documents the no-load-current-adjusted candidate model and copper-loss scope", () => {
+  it("documents the candidate model as a single-column MathML explanation with accessible formulas", () => {
     const html = renderPage(analysisFixture(), "2.2");
-    expect(html).toContain("0.5×–2×");
+
+    expect(html).toContain('<ol class="space-y-3 px-4 py-4');
+    expect(sectionsSource).not.toContain("md:grid-cols-2");
+    expect(html.match(/<math display="block" aria-label=/g)).toHaveLength(12);
+    expect(html).toContain("<mfrac>");
+    expect(html).toContain("<msub>");
+    expect(html).toContain("<msup>");
+    for (const label of [
+      "覆盖率等于有效时长除以选区时长",
+      "机械功率加铜耗不超过一点一倍电池输入功率再加一瓦",
+      "候选减速比从当前减速比的一半到两倍",
+      "负载电流等于 Stator Current 减去空载电流，且不小于零",
+      "所需电压等于电阻压降加反电动势",
+      "评分等于铜耗积分加二十五瓦乘以电压占用四次方积分",
+      "铜耗能量等于电机数量乘电流平方乘电阻和时间的总和",
+      "电机组实测输入能量等于电池电压乘电机组 Supply Current 和时间的总和",
+      "铜耗变化比例等于当前铜耗减推荐后铜耗再除以电机组实测输入能量",
+    ]) {
+      expect(html).toContain(`aria-label="${label}"`);
+    }
+
+    expect(html).toContain("0.5 倍至 2 倍");
     expect(html).toContain("61 个点");
-    expect(html).toContain("机械侧速度与负载扭矩不变");
-    expect(html).toContain("Pmech + Pcu ≤ 1.1 × Pbat + 1 W");
-    expect(html).toContain("1.1× + 1 W");
-    expect(html).toContain("f = N′ / N");
-    expect(html).toContain("ω′ = fω");
-    expect(html).toContain("Iload = max(Istator - I0, 0)");
-    expect(html).toContain("I′ = I0 + Iload / f");
-    expect(html).toContain("Vreq = I′R + |ω′| / Kv");
-    expect(html).toContain("Score = Σ(nI′²RΔt) + 25 W × Σ((Vreq/Vbat)^4Δt)");
-    expect(html).toContain("25 W 是保留电压余量的经验权重");
+    expect(html).toContain("机构输出转速、负载扭矩和动作时长不变");
+    expect(html).toContain("25 W 是经验权重，不代表额外或预测能耗");
     expect(html).toContain("推荐减速比取最低可行评分点");
+    expect(html).toContain("不保证更换减速比后整机输入能量下降");
     expect(html).toContain("Follower 只提供自己的 Supply Current");
     expect(html).toContain("不能把 Follower 伪装成独立效率曲线");
     expect(html).toContain("Stator Current 大于该型号空载电流");
-    expect(html).toContain("Σ(nI²RΔt)");
-    expect(html).toContain("Σ(Vbattery × Isupply,group × Δt)");
-    expect(html).toContain("它不是整机节能比例");
+    expect(html).toContain("不是整机节能比例");
+    expect(html).toContain("该比例不包含控制器、传动、摩擦和其他负载");
     expect(html).toContain("V2.2 日志的 Stator Current 仅有幅值");
     expect(html).toContain("不能据此判断电池净回充");
   });
@@ -220,7 +235,8 @@ describe("V2AnalysisSections", () => {
     expect(rows[0]?.label).toBe(
       "Stator Current 为负：再生制动工况（不代表电池净回充）",
     );
-    expect(html).toContain("负值表示再生制动工况，不代表电池净回充");
+    expect(html).not.toContain("V2.3 保留 Stator Current 符号");
+    expect(html).not.toContain("负值表示再生制动工况，不代表电池净回充");
     expect(html).not.toContain("负值回生");
   });
 

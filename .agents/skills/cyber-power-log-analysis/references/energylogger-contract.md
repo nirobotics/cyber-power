@@ -210,7 +210,7 @@ V2 Battery Voltage 使用固定 robot 字段，上述电池字段只服务 v1。
 
 ## Supply Current 限流历史模拟
 
-模拟作用于 canonical EnergyLogger 节点，输入值是节点合计 Supply Current 上限，不是单个电机控制器配置。多个目标必须唯一且不得形成祖先/后代重叠。电流和功率按 `min(1, limit / positiveCurrent)` 比例缩放；累计 Wh 只缩放正增量并分段处理 reset。保留未选节点的 robot residual；不预测 Battery Voltage、Brownout、Stator Current、机构动作或动作耗时，也不修改原图表。
+模拟只作用于 V2 Manifest 中的 Leader 电机组：一台 Leader 与所有直接 Followers 组成一个互不重叠的目标，Follower 不单独出现。输入值是该电机组合计 Supply Current 上限，不是单个电机控制器配置。多个目标必须唯一；合法 Manifest 已保证各电机组互不重叠，因此不再使用 canonical 子系统节点、聚合确认或祖先/后代规则。正向电流和功率按 `min(1, limit / positiveCurrent)` 比例缩放，累计 Wh 只缩放正向输入能量；负值保持原样。整机电流和功率只在 robot 时间轴上按各组 held value 计算，避免 subsystem 独立时间戳造成错位扣减；整机能量从 signed residual 功率重新积分正向输入，不能直接相加各组正向节省量。成员样本不完整时不补值、不扣减。V1 因没有 Manifest 而明确不可用。不预测 Battery Voltage、Brownout、Stator Current、机构动作或动作耗时，也不修改原图表。
 
 ## 错误策略
 

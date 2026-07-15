@@ -4,6 +4,7 @@ import type { AnalysisResult } from "../log-analysis/core";
 import { createBatteryAnalysisCache, dashboardPageTitle } from "./analysis-dashboard";
 
 const dashboardSource = readFileSync(new URL("./analysis-dashboard.tsx", import.meta.url), "utf8");
+const subsystemShareSource = readFileSync(new URL("./subsystem-share.tsx", import.meta.url), "utf8");
 
 describe("dashboardPageTitle", () => {
   it("uses the active navigation label and cyber-power suffix", () => {
@@ -104,9 +105,21 @@ describe("battery load response", () => {
     expect(dashboardSource).toContain("range={committedRange}");
     const batteryPanelStart = dashboardSource.indexOf('{tab === "battery"');
     const subsystemPanelStart = dashboardSource.indexOf('{tab === "subsystems"');
-    expect(dashboardSource.slice(batteryPanelStart, subsystemPanelStart)).not.toContain(
-      "range={previewRange}",
+    const batteryPanel = dashboardSource.slice(batteryPanelStart, subsystemPanelStart);
+    expect(batteryPanel).toContain("metrics={BATTERY_TIMELINE_METRICS}");
+    expect(batteryPanel).toContain("range={previewRange}");
+    expect(batteryPanel).toContain("range={committedRange}");
+    const robotPanelStart = dashboardSource.indexOf('{tab === "robot"');
+    expect(dashboardSource.slice(robotPanelStart, batteryPanelStart)).toContain(
+      "metrics={ROBOT_OVERVIEW_METRICS}",
     );
+  });
+});
+
+describe("requested section copy", () => {
+  it("uses the concise subsystem energy-share title", () => {
+    expect(subsystemShareSource).toContain("能量占比");
+    expect(subsystemShareSource).not.toContain("子系统能量占比");
   });
 });
 
@@ -140,7 +153,9 @@ describe("live supply limit simulation", () => {
     expect(dashboardSource).not.toContain("AppliedSupplyLimitScenario");
     expect(dashboardSource).not.toContain("applySupplyLimitScenario");
     expect(dashboardSource).not.toContain("revertSupplyLimitDrafts");
-    expect(dashboardSource).toContain("upsertSupplyLimitDraft(current, nodeId, patch)");
+    expect(dashboardSource).toContain("upsertSupplyLimitDraft(current, motorGroupId, patch)");
+    expect(dashboardSource).toContain('tab !== "simulation" || !dataset.v2');
+    expect(dashboardSource).toContain("当前 V1 日志没有电机 Manifest");
     expect(dashboardSource).not.toContain("onAddTarget=");
     expect(dashboardSource).not.toContain("onRemoveTarget=");
   });

@@ -1,5 +1,6 @@
-- 8214 当前使用无通信能力的 PDP 2.0，生产日志不会提供可用的 PDP/PDP 总电流或总功率；Cyber Power 的电池分析只能使用 Battery Voltage 与已注册电机 Supply Current 总和，必须称为“已注册电机负载下的电压响应/等效压降代理”，不得表述成真实电池总电流、纯电池内阻、SOC、容量或整机总 Wh。
+- 8214 当前使用无通信能力的 PDP 2.0，生产日志不会提供可用的 PDP/PDP 总电流或总功率；Cyber Power 的电池分析只能使用 Battery Voltage 与已注册电机 Supply Current 总和。用户界面统一称为“整机”，但方法与限制必须明确该口径不是 PDP/PDH 总电流，不得表述成真实电池总电流、纯电池内阻、SOC、容量或整机总 Wh。
 - Cyber Power vendordep 只允许写入 EnergyLogger V2，彻底舍弃 V1 写入 API 与双写路径；网页端必须继续兼容读取既有 V1 日志，并同时支持 V2。
+- 限流模拟只能以 V2 Manifest 的 Leader 电机组为目标：一台 Leader 与其全部直接 Followers 使用合计 Supply Current 上限；不得把 canonical 子系统节点、Follower 单机或用户确认的聚合路径伪装成电机组。V1 继续用于历史分析，但因没有 Manifest 不提供限流模拟。
 - EnergyLogger V2 的高级分析范围只保留估算驱动效率、减速比推荐和分状态功耗；机器人端复用既有 Supply Current、Stator Current 与全局电池电压，唯一允许新增的 CAN 状态信号是每个独立电机或同构组 Leader 的原生 Rotor Velocity，禁止为 Follower 或其他诊断字段新增信号；原生转速、TalonFX 反馈单位换算比例和被推荐的有效减速比必须保持独立。
 - Cyber Power vendordep 的 Java 根包路径固定为 `com.nextinnovation.cyberpower`；源码、测试、Javadoc、发布坐标说明和机器人 import 全部使用该路径，不得改用 `com.nirobotics.cyberpower`。
 - EnergyLogger v2 的执行顺序固定为：先让 Cyber Power 网页冻结并支持 v1/v2 增量日志契约及新分析功能，再构建、测试并发布可匿名安装的 vendordep，最后才迁移 `NI-8214-2026`；网页兼容和 vendordep 发布门禁未通过前，不修改生产机器人能量记录路径。

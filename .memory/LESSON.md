@@ -1,3 +1,5 @@
+- Vercel CLI `50.1.3` 的 `vercel logs` 只能监听从命令启动后最多 5 分钟的新日志，不支持历史时间或级别过滤；生产冒烟应先启动监听再发送请求，无输出只能证明监听窗口内没有应用日志，不能当作完整访问日志审计。
+- 当本机 Node 版本不符合项目 `22.x` 且 `.vercel/output` 不是当前制品时，生产发布应使用 `vercel deploy --prod --scope ni-corporate` 交给 Vercel Node 22 远端构建，禁止直接发布旧 `--prebuilt` 输出；未提交工作区会进入 CLI 快照，但部署 Git 元数据仍指向旧提交，需要在交接中明确追溯风险。
 - Phoenix 6 的 Stator Current 是有符号工况量：正值表示 motoring、负值表示 regenerative braking（再生制动工况），且与旋转方向无关；负 Stator 本身不证明电池净回充，设备返回直流母线的功率应看带符号的 Supply Voltage 与 Supply Current，整机净回充还需看电池端总功率。Supply Current 必须保留电池侧符号。V2.2 已发布为 Stator 幅值语义，不能原地移除 `abs`；V2.3 通过新契约保留 Stator 符号，网页必须继续按版本解释。
 - “有效持续时间”必须用 `dataset.series.enabled` 是否存在区分“全程 Disabled”和“日志缺少 Enabled”：前者为 0，后者回退完整选区时长，不能仅依据 `enabledDurationSeconds === 0` 判断。
 - 底部 Brownout 事件标记应取每个 true interval 的 `startUs`，按完整能量日志 `min/max` 定位，并使用固定像素尺寸、`pointer-events: none` 的独立图层；不能把叉号几何放进 `preserveAspectRatio="none"` 的整轴 SVG，否则窄屏会把红叉压成竖线。
@@ -19,10 +21,10 @@
 - 多图时间游标必须区分固定值与悬停预览：悬停只同步图表显示，离开图表后恢复固定值，不能移动底部时间组件；只有图表点击、底部游标操作或峰值定位可提交固定值。图表点击应直接用点击像素换算时间，不能依赖先前的 mousemove 状态。
 - 平均功率在存在 `Enabled` 序列时应以选区内所有 Enabled 交集的累计能量增量之和除以 Enabled 总时长；Disabled 期间的能量变化不进入分子，全 Disabled 返回 0。缺少 `Enabled` 序列时才回退到完整选区口径，以兼容旧日志。
 - 同一路由的上传态与分析态共用页面时，SSR route meta 只能给上传态的稳定标题；客户端 Workspace 在结果为空时负责恢复应用名，分析结果存在时必须把标题所有权留给内部导航 Dashboard，否则替换文件后会残留旧导航标题。
-- Supply Current 历史回放的多个目标必须在 EnergyLogger 层级中形成 antichain；只禁止重复 ID 不够，祖先和后代同时扣减会把同一负载算两次。整机估算应从实测整机值扣除各目标的实测与估算差，不能重新求和子系统；扣减出现明显负值时保留逐目标结果并把整机结果标为不可用。
-- EnergyLogger 累计 Wh 的限流估算必须在每个能量样本时刻取 held Supply Current，只缩放非负增量并把下降作为 reset；不能重新积分功率。负电流或负功率样本应保持原样，电流不大于 0 但功率或能量仍增加时也不能虚报节省量。
-- 多目标限流模拟不应维护 draft/applied 两套配置：以一份 draft 为事实源，总开关关闭时完全跳过估算但保留所有启用状态、输入值和聚合确认；开启后每次有效修改只执行一次原子估算，无效配置立即隐藏旧报告，禁用行始终保留且不进入计算。
-- 配置对象与 EnergyLogger 层级一一对应时，应直接在与数据明细相同的可展开路径表中行内编辑，使用稀疏 upsert 保存已触碰行；独立“候选列表 + 已选列表”会重复层级、增加添加/删除步骤。折叠后仍要提示已启用后代，并把隐藏行错误提升到可见区域。
+- V2 Supply Current 历史回放的最小合法目标应直接来自 Manifest：一台 Leader 与其全部直接 Followers。合法 Manifest 已保证这些组互不重叠，因此只需拒绝重复 `motorGroupId`；canonical 子系统层级、聚合确认和祖先/后代 antichain 都会重新引入猜测。V1 没有 Manifest 时应明确不可用。
+- 电机组限流能量应由 held Battery Voltage 与组内严格 Supply Current 合计派生，只缩放正向输入区间；负值与任一成员 `NaN` 的区间保持原样，不能虚报节省量。任意选区必须直接对 held 功率在精确的 `[start, end)` 边界积分，不能用累计 Wh 样本相减代替。整机 signed residual 只在 robot 时间轴 sample-and-hold 各组后计算，避免 subsystem 独立时间戳错位；整机正向 Wh 必须从该 residual 功率重新积分，不能简单相加各组正向节省量，因为其他电机可能同时回流。负 residual 本身合法，只有 robot 电气时间轴非有限或数据不调和时才保留逐组结果并把整机结果标为不可用。
+- 多电机组限流模拟不应维护 draft/applied 两套配置：以一份稀疏 draft 为事实源，总开关关闭时完全跳过估算但保留各组启用状态和输入值；开启后每次有效修改只执行一次原子估算，无效配置立即隐藏旧报告，禁用行始终保留且不进入计算。
+- Manifest 电机组应在扁平行内表中直接编辑：主行显示 `子系统/Leader`，只有存在 Followers 时才在次行列出名称；独立候选/已选列表、层级展开、聚合确认和父子冲突提示都没有业务意义。
 - React Router 的 `typegen`、typecheck、test 与 build 都会读写 `.react-router`；同一工作区不能并发运行这些命令，否则会出现临时文件 ENOENT。bundle 报告可以在 build 完成后单独运行。
 - Vite PWA 会把 manifest 图标自动加入 Workbox 预缓存；若通用 glob 也匹配图标，必须用 `globIgnores` 排除，否则离线缓存会出现重复 URL 和无效体积。
 - WPILOG Blob/File decoder 应在大外部 chunk 内继续使用较小窗口，并只保留跨窗口残片，避免每条记录在 4 MiB 缓冲区上反复分配；常规微秒时间戳用安全整数 `number`，仅越过 `MAX_SAFE_INTEGER` 时回退 BigInt。纯 TypeScript 基准已经达到性能目标时，不应为 WASM 增加复制边界、构建链和兼容性成本。
@@ -42,3 +44,4 @@
 - V2.3 的通用设备适配器必须先归一化电流方向：Supply Current 从直流母线取电为正、向母线返回为负，Stator Current 驱动为正、再生制动为负，二者都不得因为转子反转而翻转；否则正向 Wh/Ah、回流区间、效率和电池代理都会被系统性误判。
 - Kraken X44/X60 的当前模型用 CTRE 12 V 曲线端点分别拟合 `R/Kt/Kv/I0`，机械功率使用 `Iload=max(Istator-I0,0)`，铜耗使用 `n×Istator²×R`。减速比候选必须包含当前比作为精确恒等点；候选评分中的 25 W 电压余量权重只是启发式偏好，不是额外能耗，因此推荐后铜耗可能高于当前值，界面要按带符号“减少/增加”显示，不能伪装成必然节能。
 - `akit_26-07-15_07-29-59.wpilog` 默认比赛区间的电池代理实测基线为：正向已注册电机输入 `75.3656 Wh`、拒绝 17 个跨空洞候选后阶跃代理中位数 `16.371 mΩ`、局部窗口代理中位数 `17.003 mΩ`，两种独立方法量级一致；该值仍混合电池、线束、连接器、动态恢复和未记录负载，只能作为单场局部代理。解析 72.20 MiB / 2,901,736 records 的三次本地基准为均值 `571.291 ms`、P95 `584.809 ms`、峰值 RSS `231.68 MiB`；已解析数据上电池代理五次均值 `69.633 ms`、P95 `72.319 ms`。
+- 电压－电流关系图不能按日志时间顺序连线；同一电流会跨越 SOC、动态恢复和未记录负载，折线只会制造乱线。应按真实 interval `dt` 加权、以 `0 A` 为固定边界做 24–40 档分箱，主图显示加权中位数与 P25–P75，副图显示观测时长，原始点默认关闭且不连线。

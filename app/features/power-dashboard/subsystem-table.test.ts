@@ -185,7 +185,7 @@ describe("buildSubsystemTableRows", () => {
     expect(rows[0].hasChildren).toBe(false);
   });
 
-  it("将总行显示在唯一的功耗明细表中", () => {
+  it("将总行显示在唯一的明细表中", () => {
     const total = {
       ...metric("drive", 9, null),
       averagePowerW: 123,
@@ -227,7 +227,8 @@ describe("buildSubsystemTableRows", () => {
       }),
     );
 
-    expect(html.match(/功耗明细/g)).toHaveLength(1);
+    expect(html.match(/>明细<\/h2>/g)).toHaveLength(1);
+    expect(html).not.toContain("功耗明细");
     expect(html).toContain("全部");
     expect(html).toContain("9.0000 Wh");
     expect(html).toContain("123.0 W");

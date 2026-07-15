@@ -1,5 +1,5 @@
 import { Eye, EyeOff } from "lucide-react";
-import type { LineSeriesOption } from "echarts/charts";
+import type { BarSeriesOption, LineSeriesOption } from "echarts/charts";
 import type {
   DataZoomComponentOption,
   GridComponentOption,
@@ -20,6 +20,7 @@ import { SUBSYSTEM_TIMELINE_COLORS } from "./subsystem-colors";
 
 type EChartsOption = ComposeOption<
   | LineSeriesOption
+  | BarSeriesOption
   | GridComponentOption
   | TooltipComponentOption
   | DataZoomComponentOption
@@ -97,6 +98,8 @@ const ROBOT_CHARTS = [
   focus: TimelineFocus;
 }>;
 
+const DEFAULT_ROBOT_METRICS = ["voltage", "current", "power", "energy"] as const;
+
 const ROBOT_LEGEND_ITEMS = [
   { metric: "voltage", label: "电池电压", color: COLORS.voltage },
   { metric: "current", label: "总电流", color: COLORS.current },
@@ -106,9 +109,9 @@ const ROBOT_LEGEND_ITEMS = [
 
 function robotMetricLabel(dataset: EnergyLogDataset, metric: RobotMetric, fallback: string): string {
   if (dataset.sourceContract !== "v2") return fallback;
-  if (metric === "current") return "已注册电机合计电流";
-  if (metric === "power") return "已注册电机合计功率";
-  if (metric === "energy") return "已注册电机累计能量";
+  if (metric === "current") return "整机电流";
+  if (metric === "power") return "整机功率";
+  if (metric === "energy") return "整机累计能量";
   return fallback;
 }
 
@@ -137,6 +140,7 @@ export function RobotTimeline({
   cursorUs,
   cursorPreviewActive,
   focus,
+  metrics = DEFAULT_ROBOT_METRICS,
   onCursorPreview,
   onCursorCommit,
 }: {
@@ -145,22 +149,28 @@ export function RobotTimeline({
   cursorUs: number;
   cursorPreviewActive: boolean;
   focus: TimelineFocus;
+  metrics?: readonly RobotMetric[];
   onCursorPreview: (cursorUs: number | null) => void;
   onCursorCommit: (cursorUs: number) => void;
 }) {
   const theme = useSyncExternalStore(subscribeTheme, getInitialTheme, getServerTheme);
+  const charts = useMemo(
+    () => ROBOT_CHARTS.filter(({ metric }) => metrics.includes(metric)),
+    [metrics],
+  );
   const options = useMemo(
     () => Object.fromEntries(
-      ROBOT_CHARTS.map(({ metric, zoomId }) => [metric, createRobotTimelineOption(dataset, metric, theme, zoomId)]),
-    ) as Record<RobotMetric, EChartsOption>,
-    [dataset, theme],
+      charts.map(({ metric, zoomId }) => [metric, createRobotTimelineOption(dataset, metric, theme, zoomId)]),
+    ) as Partial<Record<RobotMetric, EChartsOption>>,
+    [charts, dataset, theme],
   );
-  const showThreshold = (dataset.series.brownoutVoltageV?.values.length ?? 0) > 0;
+  const showThreshold = metrics.includes("voltage") &&
+    (dataset.series.brownoutVoltageV?.values.length ?? 0) > 0;
 
   return (
     <div className="grid gap-2.5" aria-label="机器人总状态">
       <section className="card flex flex-wrap gap-x-4 gap-y-2 px-4 py-3" aria-label="整机曲线图例">
-        {ROBOT_LEGEND_ITEMS.map((item) => (
+        {ROBOT_LEGEND_ITEMS.filter(({ metric }) => metrics.includes(metric)).map((item) => (
           <span key={item.label} className="inline-flex items-center gap-1.5 text-xs text-ink-dim">
             <span className="h-0 w-4 border-t-2" style={{ borderColor: item.color }} aria-hidden />
             {robotMetricLabel(dataset, item.metric, item.label)}
@@ -174,15 +184,15 @@ export function RobotTimeline({
         ) : null}
       </section>
 
-      {ROBOT_CHARTS.map(({ metric, label, zoomId, ariaLabel, focus: metricFocus }) => (
+      {charts.map(({ metric, label, zoomId, ariaLabel, focus: metricFocus }) => (
         <TimelineChartCard
           key={metric}
           title={robotMetricLabel(dataset, metric, label)}
-          ariaLabel={`整机${robotMetricLabel(dataset, metric, label)}`}
+          ariaLabel={robotMetricLabel(dataset, metric, label)}
         >
           <TimelineChart
             dataset={dataset}
-            option={options[metric]}
+            option={options[metric]!}
             zoomId={zoomId}
             cursorAxisIndex={0}
             range={range}
@@ -405,6 +415,59 @@ export function TimelineChart({
   );
 }
 
+export function StaticEChartsChart({
+  option,
+  className,
+  ariaLabel,
+}: {
+  option: EChartsOption;
+  className: string;
+  ariaLabel: string;
+}) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const chartRef = useRef<ECharts | null>(null);
+  const optionRef = useRef(option);
+  optionRef.current = option;
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const releaseWheel = captureWheelForPageScroll(container);
+    let cancelled = false;
+    let resizeObserver: ResizeObserver | undefined;
+
+    void import("./echarts-runtime").then(({ echarts }) => {
+      if (cancelled || !containerRef.current) return;
+      const chart = echarts.init(containerRef.current, undefined, { renderer: "canvas" });
+      chartRef.current = chart;
+      chart.setOption(optionRef.current, { notMerge: true });
+      resizeObserver = new ResizeObserver(() => chart.resize());
+      resizeObserver.observe(containerRef.current);
+    });
+
+    return () => {
+      cancelled = true;
+      releaseWheel();
+      resizeObserver?.disconnect();
+      chartRef.current?.dispose();
+      chartRef.current = null;
+    };
+  }, []);
+
+  useEffect(() => {
+    chartRef.current?.setOption(option, { notMerge: true, lazyUpdate: true });
+  }, [option]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`w-full cursor-default [&_*]:!cursor-default ${className}`}
+      role="img"
+      aria-label={ariaLabel}
+    />
+  );
+}
+
 export function createRobotTimelineOption(
   dataset: EnergyLogDataset,
   metric: RobotMetric,
@@ -431,7 +494,7 @@ export function createRobotTimelineOption(
       stepped: true,
     },
     current: {
-      label: dataset.sourceContract === "v2" ? "已注册电机合计电流" : "总电流",
+      label: dataset.sourceContract === "v2" ? "整机电流" : "总电流",
       unit: "A",
       color: COLORS.current,
       id: "total-current",

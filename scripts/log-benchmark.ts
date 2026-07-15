@@ -23,7 +23,6 @@ interface BenchmarkOptions {
   startSeconds?: number;
   endSeconds?: number;
   limits: SupplyCurrentLimitInput[];
-  aggregateNodeIds: Set<string>;
 }
 
 interface MemorySnapshot {
@@ -62,12 +61,11 @@ Options:
   --runs <count>               Measured runs per file (default: 5)
   --start <seconds>            Analysis range start
   --end <seconds>              Analysis range end
-  --limit <nodeId=amps>        Add an enabled Supply Current limit (repeatable)
-  --confirm-aggregate <nodeId> Confirm an aggregate target (repeatable)
+  --limit <motorGroupId=amps>  Add an enabled Leader motor-group limit (repeatable)
   --json                       Print machine-readable JSON
   --help                       Show this help
 
-Use the EnergyLogger node id shown by the analysis output. A limit plan is
+Use the V2 Manifest motor-group id shown by the analysis output. A limit plan is
 validated independently for every input log.`);
 }
 
@@ -94,14 +92,14 @@ function finiteSeconds(value: string, name: string): number {
 function parseLimit(value: string): SupplyCurrentLimitInput {
   const separator = value.lastIndexOf("=");
   if (separator <= 0 || separator === value.length - 1) {
-    throw new Error(`Invalid --limit value: ${value}; expected nodeId=amps`);
+    throw new Error(`Invalid --limit value: ${value}; expected motorGroupId=amps`);
   }
-  const nodeId = value.slice(0, separator);
+  const motorGroupId = value.slice(0, separator);
   const limitA = Number(value.slice(separator + 1));
   if (!Number.isFinite(limitA) || limitA < 0) {
     throw new Error(`Invalid Supply Current limit: ${value}`);
   }
-  return { nodeId, limitA, enabled: true };
+  return { motorGroupId, limitA, enabled: true };
 }
 
 function parseArguments(argv: string[]): BenchmarkOptions | undefined {
@@ -111,7 +109,6 @@ function parseArguments(argv: string[]): BenchmarkOptions | undefined {
     runs: 5,
     json: false,
     limits: [],
-    aggregateNodeIds: new Set<string>(),
   };
   for (let index = 0; index < argv.length; index += 1) {
     const argument = argv[index];
@@ -129,8 +126,7 @@ function parseArguments(argv: string[]): BenchmarkOptions | undefined {
       argument === "--runs" ||
       argument === "--start" ||
       argument === "--end" ||
-      argument === "--limit" ||
-      argument === "--confirm-aggregate"
+      argument === "--limit"
     ) {
       const value = optionValue(argv, index, argument);
       index += 1;
@@ -139,7 +135,6 @@ function parseArguments(argv: string[]): BenchmarkOptions | undefined {
       if (argument === "--start") options.startSeconds = finiteSeconds(value, argument);
       if (argument === "--end") options.endSeconds = finiteSeconds(value, argument);
       if (argument === "--limit") options.limits.push(parseLimit(value));
-      if (argument === "--confirm-aggregate") options.aggregateNodeIds.add(value);
       continue;
     }
     if (argument.startsWith("--")) throw new Error(`Unknown option: ${argument}`);
@@ -155,19 +150,12 @@ function parseArguments(argv: string[]): BenchmarkOptions | undefined {
     throw new Error("--start cannot be greater than --end");
   }
   const duplicateLimits = options.limits.filter(
-    (limit, index) => options.limits.findIndex((candidate) => candidate.nodeId === limit.nodeId) !== index,
+    (limit, index) => options.limits.findIndex(
+      (candidate) => candidate.motorGroupId === limit.motorGroupId,
+    ) !== index,
   );
   if (duplicateLimits.length > 0) {
-    throw new Error(`Duplicate --limit target: ${duplicateLimits[0].nodeId}`);
-  }
-  options.limits = options.limits.map((limit) => ({
-    ...limit,
-    ...(options.aggregateNodeIds.has(limit.nodeId) ? { aggregateConfirmed: true } : {}),
-  }));
-  for (const nodeId of options.aggregateNodeIds) {
-    if (!options.limits.some((limit) => limit.nodeId === nodeId)) {
-      throw new Error(`--confirm-aggregate has no matching --limit: ${nodeId}`);
-    }
+    throw new Error(`Duplicate --limit target: ${duplicateLimits[0].motorGroupId}`);
   }
   return options;
 }
@@ -265,7 +253,7 @@ function resultFingerprint(
     simulation: simulation
       ? {
           targets: simulation.targets.map((target) => ({
-            nodeId: target.nodeId,
+            motorGroupId: target.motorGroupId,
             limitA: target.limitA,
             estimated: target.estimated,
           })),

@@ -1,247 +1,137 @@
 import { describe, expect, it } from "vitest";
-
 import {
+  appendEnergySample,
+  appendEnergyV2FixtureSample,
+  buildEnergyFixture,
+  buildEnergyV2Fixture,
+} from "../../../../tests/fixtures/wpilog-builder";
+import {
+  deriveEnergyLoggerV2MotorGroupElectricalSeries,
   estimateSupplyCurrentLimits,
+  parseEnergyLog,
   SupplyLimitValidationError,
   validateSupplyCurrentLimits,
 } from "./index";
-import type {
-  BooleanSeries,
-  EnergyLogDataset,
-  LogIssue,
-  NumericSeries,
-  SubsystemNode,
-} from "./types";
+import type { BooleanSeries, EnergyLogDataset, NumericSeries } from "./types";
 
-const TIMESTAMPS = [0, 1_000_000, 2_000_000, 3_000_000, 4_000_000];
-
-function numericSeries(
-  entryName: string,
-  values: number[],
-  timestampsUs = TIMESTAMPS,
-  unit = "",
-): NumericSeries {
-  return {
-    entryName,
-    unit,
-    timestampsUs: Float64Array.from(timestampsUs),
-    values: Float64Array.from(values),
-  };
+interface SampleOptions {
+  robotCurrentA?: number;
+  robotVoltageV?: number;
+  driveLeaderSupplyCurrentA?: number;
+  driveFollowerSupplyCurrentA?: number;
+  indexerSupplyCurrentA?: number;
 }
 
-function booleanSeries(
-  entryName: string,
-  values: number[],
-  timestampsUs: number[],
-): BooleanSeries {
+async function buildV2Dataset(samples: readonly SampleOptions[] = Array.from({ length: 5 }, () => ({}))) {
+  const fixture = buildEnergyV2Fixture();
+  samples.forEach((options, index) => {
+    appendEnergyV2FixtureSample(
+      fixture,
+      (index + 1) * 1_000_000,
+      { drive: "DRIVE", indexer: "FEED" },
+      0,
+      options,
+    );
+  });
+  return parseEnergyLog(fixture.builder.build());
+}
+
+function groupId(dataset: EnergyLogDataset, subsystemName: string): string {
+  const group = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)?.find(
+    (candidate) => candidate.subsystemName === subsystemName,
+  );
+  if (!group) throw new Error(`Missing test motor group: ${subsystemName}`);
+  return group.id;
+}
+
+function booleanSeries(values: number[], timestampsUs: number[]): BooleanSeries {
   return {
-    entryName,
+    entryName: "/DriverStation/Enabled",
     timestampsUs: Float64Array.from(timestampsUs),
     values: Uint8Array.from(values),
   };
 }
 
-function subsystem(
-  id: string,
-  current: number[],
-  power: number[],
-  energy: number[],
-  options: {
-    parentId?: string | null;
-    childrenIds?: string[];
-  } = {},
-): SubsystemNode {
-  const segments = id.split("/");
-  const childrenIds = options.childrenIds ?? [];
-  return {
-    id,
-    rawPath: id,
-    displayName: segments.at(-1)!,
-    parentId: options.parentId ?? null,
-    depth: segments.length - 1,
-    childrenIds,
-    isAggregate: childrenIds.length > 0,
-    currentA: numericSeries(`current/${id}`, current, TIMESTAMPS, "A"),
-    powerW: numericSeries(`power/${id}`, power, TIMESTAMPS, "W"),
-    energyWh: numericSeries(`energy/${id}`, energy, TIMESTAMPS, "Wh"),
-  };
-}
-
-function buildDataset(issues: LogIssue[] = []): EnergyLogDataset {
-  const indexer = subsystem(
-    "indexer",
-    [10, 100, 40, 80, 20],
-    [120, 1_200, 480, 960, 240],
-    [0, 1, 3, 5, 6],
-  );
-  const intake = subsystem(
-    "intake",
-    [20, 30, 90, 20, 20],
-    [240, 360, 1_080, 240, 240],
-    [0, 1, 2, 4, 5],
-  );
-  const shooter = subsystem(
-    "shooter",
-    [10, 10, 10, 10, 10],
-    [120, 120, 120, 120, 120],
-    [0, 1, 2, 3, 4],
-    { childrenIds: ["shooter/flywheel"] },
-  );
-  const flywheel = subsystem(
-    "shooter/flywheel",
-    [10, 10, 10, 10, 10],
-    [120, 120, 120, 120, 120],
-    [0, 1, 2, 3, 4],
-    { parentId: "shooter" },
-  );
-  const enabled = booleanSeries(
-    "/DriverStation/Enabled",
-    [1, 0, 1, 0],
-    [0, 2_000_000, 3_000_000, 4_000_000],
-  );
-
-  return {
-    header: {
-      version: 0x0100,
-      majorVersion: 1,
-      minorVersion: 0,
-      extraHeader: "",
-      byteLength: 0,
-    },
-    file: {
-      recordCount: 0,
-      dataRecordCount: 0,
-      controlRecordCount: 0,
-      lastGoodOffset: 0,
-    },
-    root: "/Unknown/energyLogger",
-    bounds: {
-      logStartUs: 0,
-      logEndUs: 4_000_000,
-      energyStartUs: 0,
-      energyEndUs: 4_000_000,
-    },
-    series: {
-      totalCurrentA: numericSeries(
-        "totalCurrent",
-        [40, 140, 140, 110, 50],
-        TIMESTAMPS,
-        "A",
-      ),
-      totalPowerW: numericSeries(
-        "totalPower",
-        [480, 1_680, 1_680, 1_320, 600],
-        TIMESTAMPS,
-        "W",
-      ),
-      totalEnergyWh: numericSeries("totalEnergy", [0, 3, 7, 12, 15], TIMESTAMPS, "Wh"),
-      enabled,
-    },
-    subsystems: [indexer, intake, shooter, flywheel],
-    segments: {
-      brownouts: [],
-      enabled: [
-        { startUs: 0, endUs: 2_000_000, durationSeconds: 2 },
-        { startUs: 3_000_000, endUs: 4_000_000, durationSeconds: 1 },
-      ],
-      modes: [],
-    },
-    quality: {
-      issues,
-      reconciliation: {
-        totalEnergyWh: 15,
-        topLevelEnergyWh: 15,
-        differenceWh: 0,
-        differencePercent: 0,
-        withinTolerance: true,
-      },
-      droppedNonfiniteSamples: 0,
-      resetCount: 0,
-    },
-  };
-}
-
-function copyNumericValues(dataset: EnergyLogDataset): number[][] {
+function copiedValues(dataset: EnergyLogDataset): number[][] {
   return [
     ...Object.values(dataset.series)
       .filter((series): series is NumericSeries => series !== undefined && "unit" in series)
       .map((series) => Array.from(series.values)),
-    ...dataset.subsystems.flatMap((node) => [
-      Array.from(node.currentA.values),
-      Array.from(node.powerW.values),
-      Array.from(node.energyWh.values),
-    ]),
+    ...dataset.v2!.subsystems.map((subsystem) => Array.from(subsystem.motorSamples.values)),
+    Array.from(dataset.v2!.robotSupplyCurrentAmps.values),
+    Array.from(dataset.v2!.robotBatteryVoltageVolts.values),
   ];
 }
 
-describe("multi-target Supply current limit estimator", () => {
-  it("accepts a top-level terminal node such as indexer without aggregate confirmation", () => {
-    const dataset = buildDataset();
-
-    expect(validateSupplyCurrentLimits(dataset, [{ nodeId: "indexer", limitA: 50 }])).toEqual(
-      [],
-    );
+describe("Manifest motor-group Supply current limit estimator", () => {
+  it("limits one Leader group using Leader plus Follower Supply Current", async () => {
+    const dataset = await buildV2Dataset();
+    const driveId = groupId(dataset, "drive");
+    expect(validateSupplyCurrentLimits(dataset, [{ motorGroupId: driveId, limitA: 10 }]))
+      .toEqual([]);
 
     const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
+      limits: [{ motorGroupId: driveId, limitA: 10 }],
     });
 
-    expect(result).not.toHaveProperty("timeline");
     expect(result.targets).toHaveLength(1);
     expect(result.targets[0]).toMatchObject({
-      nodeId: "indexer",
-      kind: "terminal",
-      limitA: 50,
-      energySavedWh: 1.25,
-      clippedDurationSeconds: 2,
-      ampSecondsRemoved: 80,
+      motorGroupId: driveId,
+      subsystemName: "drive",
+      leaderName: "frontLeft",
+      motorNames: ["frontLeft", "frontRight"],
+      motorCount: 2,
+      limitA: 10,
+      clippedDurationSeconds: 4,
+      ampSecondsRemoved: 40,
     });
-    expect(result.targets[0].baseline.energyWh).toBe(6);
-    expect(result.targets[0].estimated.energyWh).toBe(4.75);
-    expect(result.targets[0].estimated.peakCurrentA).toBe(50);
-    expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_000_000);
-    expect(result.targets[0].estimated.peakCurrentA).toBeLessThanOrEqual(50);
-    expect(result.targets[0].estimated.averagePowerW).toBeCloseTo(4_200);
+    expect(result.targets[0].baseline.peakCurrentA).toBe(20);
+    expect(result.targets[0].estimated.peakCurrentA).toBe(10);
+    expect(result.targets[0].baseline.energyWh).toBeCloseTo(240 * 4 / 3600, 10);
+    expect(result.targets[0].estimated.energyWh).toBeCloseTo(120 * 4 / 3600, 10);
+    expect(result.targets[0].baseline.averagePowerW).toBeCloseTo(240, 10);
+    expect(result.targets[0].estimated.averagePowerW).toBeCloseTo(120, 10);
   });
 
-  it("applies several independent targets atomically and is invariant to input order", () => {
-    const dataset = buildDataset();
+  it("applies independent Leader groups atomically and is invariant to input order", async () => {
+    const dataset = await buildV2Dataset();
+    const driveId = groupId(dataset, "drive");
+    const indexerId = groupId(dataset, "indexer");
     const forward = estimateSupplyCurrentLimits(dataset, {
       limits: [
-        { nodeId: "indexer", limitA: 50 },
-        { nodeId: "intake", limitA: 50 },
+        { motorGroupId: driveId, limitA: 10 },
+        { motorGroupId: indexerId, limitA: 2.5 },
       ],
     });
     const reversed = estimateSupplyCurrentLimits(dataset, {
       limits: [
-        { nodeId: "intake", limitA: 50 },
-        { nodeId: "indexer", limitA: 50 },
+        { motorGroupId: indexerId, limitA: 2.5 },
+        { motorGroupId: driveId, limitA: 10 },
       ],
     });
 
     expect(reversed).toEqual(forward);
-    expect(forward.targets.map((target) => target.nodeId)).toEqual(["indexer", "intake"]);
-    expect(forward.totals.activeTargetCount).toBe(2);
-    expect(forward.totals.energySavedWh).toBeCloseTo(1.25 + 4 / 9);
-    expect(forward.totals.estimated?.energyWh).toBeCloseTo(15 - 1.25 - 4 / 9);
-    expect(forward.totals.estimated?.peakCurrentA).toBe(100);
-    expect(forward.totals.estimated?.peakCurrentTimestampUs).toBe(2_000_000);
-    expect(forward.totals.estimated?.peakPowerW).toBe(1_200);
-    expect(forward.totals.estimated?.peakPowerTimestampUs).toBe(2_000_000);
-    expect(forward.totals.clippedUnionDurationSeconds).toBe(3);
-    expect(forward.totals.clippedDurationSumSeconds).toBe(3);
+    expect(forward.targets.map((target) => target.motorGroupId)).toEqual(
+      [driveId, indexerId].sort(),
+    );
+    expect(forward.totals.estimated?.peakCurrentA).toBeCloseTo(12.5, 10);
+    expect(forward.totals.estimated?.peakPowerW).toBeCloseTo(150, 10);
+    expect(forward.totals.estimated?.energyWh).toBeCloseTo(150 * 4 / 3600, 10);
+    expect(forward.totals.clippedUnionDurationSeconds).toBe(4);
+    expect(forward.totals.clippedDurationSumSeconds).toBe(8);
   });
 
-  it("is unchanged above the observed peak and saves monotonically as the limit falls", () => {
-    const dataset = buildDataset();
+  it("is unchanged above the observed group peak and becomes stricter monotonically", async () => {
+    const dataset = await buildV2Dataset();
+    const driveId = groupId(dataset, "drive");
     const high = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 200 }],
+      limits: [{ motorGroupId: driveId, limitA: 30 }],
     });
     const medium = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
+      limits: [{ motorGroupId: driveId, limitA: 10 }],
     });
     const zero = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 0 }],
+      limits: [{ motorGroupId: driveId, limitA: 0 }],
     });
 
     expect(high.targets[0].estimated).toEqual(high.targets[0].baseline);
@@ -250,220 +140,162 @@ describe("multi-target Supply current limit estimator", () => {
     expect(zero.targets[0].estimated.peakCurrentA).toBe(0);
     expect(high.totals.energySavedWh).toBeLessThan(medium.totals.energySavedWh);
     expect(medium.totals.energySavedWh).toBeLessThan(zero.totals.energySavedWh);
-    expect(zero.totals.robotEstimateAvailable).toBe(true);
   });
 
-  it("rejects unconfirmed aggregates, duplicate targets, and ancestor/descendant overlap", () => {
-    const dataset = buildDataset();
+  it("rejects a Follower as a target, duplicate groups, invalid limits, and V1 logs", async () => {
+    const dataset = await buildV2Dataset();
+    const driveId = groupId(dataset, "drive");
     const issues = validateSupplyCurrentLimits(dataset, [
-      { nodeId: "shooter", limitA: 20 },
-      { nodeId: "shooter/flywheel", limitA: 10 },
-      { nodeId: "shooter/flywheel", limitA: 5 },
+      { motorGroupId: `${dataset.v2!.subsystems[0].id}/frontRight`, limitA: 10 },
+      { motorGroupId: driveId, limitA: 10 },
+      { motorGroupId: driveId, limitA: -1 },
     ]);
+    expect(issues.map((issue) => issue.code)).toEqual(expect.arrayContaining([
+      "UNKNOWN_MOTOR_GROUP",
+      "DUPLICATE_TARGET",
+      "INVALID_LIMIT",
+    ]));
 
-    expect(issues.map((issue) => issue.code)).toEqual(
-      expect.arrayContaining([
-        "AGGREGATE_CONFIRMATION_REQUIRED",
-        "DUPLICATE_TARGET",
-        "HIERARCHY_CONFLICT",
-      ]),
+    const fixture = buildEnergyFixture();
+    appendEnergySample(fixture.builder, fixture.entries, 1_000_000, {
+      current: 10, power: 120, energy: 0,
+    });
+    appendEnergySample(fixture.builder, fixture.entries, 2_000_000, {
+      current: 10, power: 120, energy: 1,
+    });
+    const v1 = await parseEnergyLog(fixture.builder.build());
+    expect(validateSupplyCurrentLimits(v1, [])).toEqual([
+      expect.objectContaining({ code: "V2_MOTOR_GROUPS_REQUIRED" }),
+    ]);
+    expect(() => estimateSupplyCurrentLimits(v1, { limits: [] }))
+      .toThrow(SupplyLimitValidationError);
+  });
+
+  it("uses held values at partial range boundaries", async () => {
+    const dataset = await buildV2Dataset([
+      {},
+      { robotCurrentA: 45, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16 },
+      { robotCurrentA: 45, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16 },
+      { robotCurrentA: 45, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16 },
+      { robotCurrentA: 45, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16 },
+    ]);
+    const driveId = groupId(dataset, "drive");
+    const result = estimateSupplyCurrentLimits(dataset, {
+      limits: [{ motorGroupId: driveId, limitA: 10 }],
+      range: { startUs: 1_500_000.4, endUs: 4_500_000.4 },
+    });
+
+    expect(result.range).toMatchObject({ startUs: 1_500_000, endUs: 4_500_000 });
+    expect(result.targets[0].baseline.energyWh).toBeCloseTo(
+      (240 * 0.5 + 480 * 2.5) / 3600,
+      10,
     );
-    expect(() =>
-      estimateSupplyCurrentLimits(dataset, {
-        limits: [
-          { nodeId: "shooter", limitA: 20, aggregateConfirmed: true },
-          { nodeId: "shooter/flywheel", limitA: 10 },
-        ],
-      }),
-    ).toThrow(SupplyLimitValidationError);
-
-    expect(
-      validateSupplyCurrentLimits(dataset, [
-        { nodeId: "shooter", limitA: 20, aggregateConfirmed: true },
-      ]),
-    ).toEqual([]);
+    expect(result.targets[0].estimated.energyWh).toBeCloseTo(120 * 3 / 3600, 10);
+    expect(result.targets[0].energySavedWh).toBeCloseTo(
+      (240 * 0.5 + 480 * 2.5 - 120 * 3) / 3600,
+      10,
+    );
+    expect(result.targets[0].clippedDurationSeconds).toBe(3);
   });
 
-  it("uses held values at range boundaries and includes an end-boundary sample", () => {
-    const result = estimateSupplyCurrentLimits(buildDataset(), {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
-      range: { startUs: 1_500_000, endUs: 3_500_000 },
+  it("returns the baseline when every configured group is disabled", async () => {
+    const dataset = await buildV2Dataset();
+    const result = estimateSupplyCurrentLimits(dataset, {
+      limits: [{ motorGroupId: groupId(dataset, "drive"), limitA: Number.NaN, enabled: false }],
     });
-
-    expect(result.targets[0].baseline.energyWh).toBe(4);
-    expect(result.targets[0].estimated.energyWh).toBe(3.25);
-    expect(result.targets[0].baseline.peakCurrentTimestampUs).toBe(1_500_000);
-    expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_500_000);
-    expect(result.targets[0].estimated.peakCurrentA).toBe(50);
-    expect(result.targets[0].clippedDurationSeconds).toBe(1);
-    expect(result.targets[0].ampSecondsRemoved).toBe(40);
-  });
-
-  it("rounds requested bounds to integer microseconds and includes an exact end sample", () => {
-    const result = estimateSupplyCurrentLimits(buildDataset(), {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
-      range: { startUs: 1_500_000.4, endUs: 3_000_000.4 },
-    });
-
-    expect(result.range).toMatchObject({ startUs: 1_500_000, endUs: 3_000_000 });
-    expect(result.targets[0].baseline.energyWh).toBe(4);
-    expect(result.targets[0].estimated.energyWh).toBe(3.25);
-    expect(result.targets[0].estimated.peakCurrentA).toBe(50);
-    expect(result.targets[0].estimated.peakCurrentTimestampUs).toBe(1_500_000);
-    expect(result.targets[0].clippedDurationSeconds).toBe(0.5);
-    expect(result.targets[0].ampSecondsRemoved).toBe(25);
-  });
-
-  it("returns an unchanged baseline when every configured target is disabled", () => {
-    const result = estimateSupplyCurrentLimits(buildDataset(), {
-      limits: [{ nodeId: "indexer", limitA: Number.NaN, enabled: false }],
-    });
-
     expect(result.targets).toEqual([]);
-    expect(result.totals.activeTargetCount).toBe(0);
     expect(result.totals.estimated).toEqual(result.totals.baseline);
-    expect(result.warnings.some((item) => item.code === "NO_ACTIVE_LIMITS")).toBe(true);
+    expect(result.warnings).toContainEqual(expect.objectContaining({ code: "NO_ACTIVE_LIMITS" }));
   });
 
-  it("reports zero estimated average power for an all-Disabled selection", () => {
-    const dataset = buildDataset();
-    dataset.series.enabled = booleanSeries("/DriverStation/Enabled", [0], [0]);
-    dataset.segments.enabled = [];
-
+  it("excludes Disabled time from average power", async () => {
+    const dataset = await buildV2Dataset([
+      {}, {},
+      { robotCurrentA: 50, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16, indexerSupplyCurrentA: 10 },
+      { robotCurrentA: 50, driveLeaderSupplyCurrentA: 24, driveFollowerSupplyCurrentA: 16, indexerSupplyCurrentA: 10 },
+      {},
+    ]);
+    dataset.series.enabled = booleanSeries([1, 0, 1], [1_000_000, 3_000_000, 5_000_000]);
+    dataset.segments.enabled = [
+      { startUs: 1_000_000, endUs: 3_000_000, durationSeconds: 2 },
+    ];
+    const driveId = groupId(dataset, "drive");
     const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
+      limits: [{ motorGroupId: driveId, limitA: 10 }],
     });
-
-    expect(result.targets[0].baseline.averagePowerW).toBe(0);
-    expect(result.targets[0].estimated.averagePowerW).toBe(0);
-    expect(result.totals.baseline.averagePowerW).toBe(0);
-    expect(result.totals.estimated?.averagePowerW).toBe(0);
+    expect(result.targets[0].baseline.averagePowerW).toBeCloseTo(240, 10);
+    expect(result.targets[0].estimated.averagePowerW).toBeCloseTo(120, 10);
   });
 
-  it("segments cumulative energy resets and scales only positive increments", () => {
-    const dataset = buildDataset();
-    const indexer = dataset.subsystems.find((node) => node.id === "indexer")!;
-    indexer.currentA = numericSeries("current/indexer", [100, 100, 100, 100], [0, 1e6, 2e6, 3e6], "A");
-    indexer.powerW = numericSeries("power/indexer", [1_200, 1_200, 1_200, 1_200], [0, 1e6, 2e6, 3e6], "W");
-    indexer.energyWh = numericSeries("energy/indexer", [0, 2, 0.5, 2.5], [0, 1e6, 2e6, 3e6], "Wh");
-    dataset.bounds.energyEndUs = 3_000_000;
-
+  it("preserves negative Supply Current instead of clipping it", async () => {
+    const dataset = await buildV2Dataset([
+      {},
+      { driveLeaderSupplyCurrentA: -6, driveFollowerSupplyCurrentA: -4 },
+      {}, {}, {},
+    ]);
+    const driveId = groupId(dataset, "drive");
     const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
+      limits: [{ motorGroupId: driveId, limitA: 10 }],
     });
+    expect(result.targets[0].warnings).toContainEqual(
+      expect.objectContaining({ code: "SOURCE_NEGATIVE_VALUE" }),
+    );
+    expect(result.targets[0].energySavedWh).toBeGreaterThan(0);
+    expect(result.targets[0].energySavedWh).toBeLessThan(120 * 4 / 3600);
+  });
 
-    expect(result.targets[0].baseline.energyWh).toBe(4);
-    expect(result.targets[0].estimated.energyWh).toBe(2);
-    expect(result.targets[0].warnings).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({ code: "SOURCE_ENERGY_RESET", details: { resetCount: 1 } }),
-      ]),
+  it("allows a negative signed robot residual when other loads are regenerating", async () => {
+    const dataset = await buildV2Dataset(Array.from({ length: 5 }, () => ({ robotCurrentA: 1 })));
+    const result = estimateSupplyCurrentLimits(dataset, {
+      limits: [{ motorGroupId: groupId(dataset, "drive"), limitA: 0 }],
+    });
+    expect(result.totals.robotEstimateAvailable).toBe(true);
+    expect(result.totals.estimated?.peakCurrentA).toBe(-19);
+    expect(result.totals.estimated?.energyWh).toBe(0);
+    expect(result.totals.energySavedWh).toBeCloseTo(12 * 4 / 3600, 10);
+    expect(result.warnings).not.toContainEqual(
+      expect.objectContaining({ code: "ROBOT_ESTIMATE_UNAVAILABLE" }),
     );
   });
 
-  it("preserves positive power and energy when held current is not positive", () => {
-    const dataset = buildDataset();
-    const indexer = dataset.subsystems.find((node) => node.id === "indexer")!;
-    indexer.currentA = numericSeries("current/indexer", [0, 0, 0, 0, 0], TIMESTAMPS, "A");
-    indexer.powerW = numericSeries("power/indexer", [100, 100, 100, 100, 100], TIMESTAMPS, "W");
-    indexer.energyWh = numericSeries("energy/indexer", [0, 1, 2, 3, 4], TIMESTAMPS, "Wh");
-
+  it("marks the robot estimate unavailable when its electrical timeline is nonfinite", async () => {
+    const dataset = await buildV2Dataset();
+    dataset.series.totalCurrentA.values[2] = Number.NaN;
     const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 0 }],
+      limits: [{ motorGroupId: groupId(dataset, "drive"), limitA: 10 }],
     });
-
-    expect(result.targets[0].energySavedWh).toBe(0);
-    expect(result.targets[0].estimated.energyWh).toBe(result.targets[0].baseline.energyWh);
-    expect(result.targets[0].warnings.some((item) => item.code === "SOURCE_CURRENT_MISMATCH"))
-      .toBe(true);
-  });
-
-  it("preserves negative power samples instead of increasing the robot estimate", () => {
-    const dataset = buildDataset();
-    const indexer = dataset.subsystems.find((node) => node.id === "indexer")!;
-    indexer.currentA = numericSeries(
-      "current/indexer",
-      [100, 100, 100, 100, 100],
-      TIMESTAMPS,
-      "A",
-    );
-    indexer.powerW = numericSeries(
-      "power/indexer",
-      [-100, -100, -100, -100, -100],
-      TIMESTAMPS,
-      "W",
-    );
-    dataset.series.totalPowerW = numericSeries(
-      "totalPower",
-      [100, 100, 100, 100, 100],
-      TIMESTAMPS,
-      "W",
-    );
-    dataset.series.totalCurrentA = numericSeries(
-      "totalCurrent",
-      [200, 200, 200, 200, 200],
-      TIMESTAMPS,
-      "A",
-    );
-
-    const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 50 }],
-    });
-
-    expect(result.targets[0].estimated.peakPowerW).toBe(-100);
-    expect(result.totals.estimated?.peakPowerW).toBe(100);
-    expect(result.totals.estimated?.peakPowerTimestampUs).toBe(0);
-    expect(result.targets[0].warnings.some((item) => item.code === "SOURCE_NEGATIVE_VALUE"))
-      .toBe(true);
-  });
-
-  it("marks the robot estimate unavailable instead of clamping a material mismatch", () => {
-    const dataset = buildDataset();
-    dataset.series.totalCurrentA = numericSeries("totalCurrent", [1, 1, 1, 1, 1], TIMESTAMPS, "A");
-    dataset.series.totalPowerW = numericSeries("totalPower", [1, 1, 1, 1, 1], TIMESTAMPS, "W");
-
-    const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 0 }],
-    });
-
     expect(result.totals.robotEstimateAvailable).toBe(false);
     expect(result.totals.estimated).toBeUndefined();
-    expect(result.warnings.some((item) => item.code === "ROBOT_ESTIMATE_UNAVAILABLE"))
-      .toBe(true);
-  });
-
-  it("maps source quality limitations to explicit estimator warnings", () => {
-    const dataset = buildDataset([
-      { severity: "warning", code: "NONFINITE_VALUE_DROPPED", message: "dropped" },
-      { severity: "warning", code: "TIME_GAP", message: "gap" },
-      { severity: "warning", code: "PARTIAL_SUBSERIES", message: "partial" },
-    ]);
-
-    const result = estimateSupplyCurrentLimits(dataset, {
-      limits: [{ nodeId: "indexer", limitA: 200 }],
-    });
-
-    expect(result.warnings.map((item) => item.code)).toEqual(
-      expect.arrayContaining([
-        "SOURCE_NONFINITE_DROPPED",
-        "SOURCE_TIME_GAP",
-        "SOURCE_PARTIAL_SUBSERIES",
-        "LIMIT_NOT_TRIGGERED",
-      ]),
+    expect(result.warnings).toContainEqual(
+      expect.objectContaining({ code: "ROBOT_ESTIMATE_UNAVAILABLE" }),
     );
   });
 
-  it("does not mutate source typed arrays", () => {
-    const dataset = buildDataset();
-    const before = copyNumericValues(dataset);
+  it("keeps nonfinite Follower intervals out of residual subtraction", async () => {
+    const dataset = await buildV2Dataset([
+      {},
+      { driveFollowerSupplyCurrentA: Number.NaN },
+      {}, {}, {},
+    ]);
+    const result = estimateSupplyCurrentLimits(dataset, {
+      limits: [{ motorGroupId: groupId(dataset, "drive"), limitA: 10 }],
+    });
+    expect(result.targets[0].warnings).toContainEqual(
+      expect.objectContaining({ code: "SOURCE_NONFINITE_DROPPED" }),
+    );
+    expect(Number.isFinite(result.targets[0].estimated.energyWh)).toBe(true);
+    expect(Number.isFinite(result.totals.energySavedWh)).toBe(true);
+  });
 
+  it("does not mutate canonical or packed source arrays", async () => {
+    const dataset = await buildV2Dataset();
+    const before = copiedValues(dataset);
     estimateSupplyCurrentLimits(dataset, {
       limits: [
-        { nodeId: "indexer", limitA: 50 },
-        { nodeId: "intake", limitA: 50 },
+        { motorGroupId: groupId(dataset, "drive"), limitA: 10 },
+        { motorGroupId: groupId(dataset, "indexer"), limitA: 2.5 },
       ],
     });
-
-    expect(copyNumericValues(dataset)).toEqual(before);
+    expect(copiedValues(dataset)).toEqual(before);
   });
 });

@@ -1,8 +1,9 @@
-import type {
-  EnergyLogDataset,
-  RangeAnalysis,
-  SupplyCurrentLimitInput,
-  SupplyLimitValidationIssue,
+import {
+  analyzeSupplyLimitMotorGroups,
+  type EnergyLogDataset,
+  type SupplyCurrentLimitInput,
+  type SupplyLimitValidationIssue,
+  type TimeRange,
 } from "../log-analysis/core";
 import {
   parseSupplyLimitDraftValue,
@@ -14,48 +15,34 @@ import {
 
 export function buildSupplyLimitTargetOptions(
   dataset: EnergyLogDataset,
-  analysis: RangeAnalysis,
+  range: TimeRange,
 ): SupplyLimitTargetOption[] {
-  const metricsById = new Map(analysis.subsystems.map((metric) => [metric.id, metric]));
-
-  return dataset.subsystems.map((node) => {
-    const metric = metricsById.get(node.id);
-    const unavailableReason = missingSeriesReason(node);
-    return {
-      id: node.id,
-      rawPath: node.rawPath,
-      parentId: node.parentId,
-      depth: node.depth,
-      childrenIds: node.childrenIds,
-      peakCurrentA: metric?.peakCurrentA ?? 0,
-      peakPowerW: metric?.peakPowerW ?? 0,
-      averagePowerW: metric?.averagePowerW ?? 0,
-      energyWh: metric?.energyWh ?? 0,
-      share: metric?.share ?? null,
-      ...(unavailableReason ? { unavailableReason } : {}),
-    };
-  });
+  return (analyzeSupplyLimitMotorGroups(dataset, range) ?? []).map((group) => ({
+    id: group.motorGroupId,
+    subsystemId: group.subsystemId,
+    subsystemName: group.subsystemName,
+    leaderName: group.leaderName,
+    motorNames: group.motorNames,
+    motorType: group.motorType,
+    motorCount: group.motorCount,
+    peakCurrentA: group.baseline.peakCurrentA,
+    peakPowerW: group.baseline.peakPowerW,
+    averagePowerW: group.baseline.averagePowerW,
+    energyWh: group.baseline.energyWh,
+    robotPositiveInputRatio: group.robotPositiveInputRatio,
+    ...(group.unavailableReason ? { unavailableReason: group.unavailableReason } : {}),
+  }));
 }
 
 export function upsertSupplyLimitDraft(
   drafts: readonly SupplyLimitDraft[],
-  nodeId: string,
+  motorGroupId: string,
   patch: SupplyLimitDraftPatch,
 ): SupplyLimitDraft[] {
-  const existingIndex = drafts.findIndex((draft) => draft.nodeId === nodeId);
+  const existingIndex = drafts.findIndex((draft) => draft.motorGroupId === motorGroupId);
   if (existingIndex === -1) {
-    return [
-      ...drafts,
-      {
-        nodeId,
-        enabled: false,
-        limitText: "",
-        aggregateConfirmed: false,
-        ...patch,
-      },
-    ];
+    return [...drafts, { motorGroupId, enabled: false, limitText: "", ...patch }];
   }
-
   return drafts.map((draft, index) =>
     index === existingIndex ? { ...draft, ...patch } : draft,
   );
@@ -67,22 +54,18 @@ export function supplyLimitDraftsToInputs(drafts: readonly SupplyLimitDraft[]): 
 } {
   const inputs: SupplyCurrentLimitInput[] = [];
   const errors: SupplyLimitDisplayError[] = [];
-
   for (const draft of drafts) {
     if (!draft.enabled) continue;
     const limitA = parseSupplyLimitDraftValue(draft.limitText);
     if (limitA === null) {
-      errors.push({ nodeId: draft.nodeId, message: "请输入大于或等于 0 的有限电流值。" });
+      errors.push({
+        motorGroupId: draft.motorGroupId,
+        message: "请输入大于或等于 0 的有限电流值。",
+      });
       continue;
     }
-    inputs.push({
-      nodeId: draft.nodeId,
-      limitA,
-      aggregateConfirmed: draft.aggregateConfirmed,
-      enabled: true,
-    });
+    inputs.push({ motorGroupId: draft.motorGroupId, limitA, enabled: true });
   }
-
   return { inputs, errors };
 }
 
@@ -91,14 +74,8 @@ export function supplyLimitIssuesToDisplay(
 ): SupplyLimitDisplayError[] {
   return issues.map((issue) => ({
     message: issue.message,
-    ...(issue.nodeIds?.[0] ? { nodeId: issue.nodeIds[0] } : {}),
-    ...(issue.nodeIds?.[1] ? { relatedNodeId: issue.nodeIds[1] } : {}),
+    ...(issue.motorGroupIds?.[0]
+      ? { motorGroupId: issue.motorGroupIds[0] }
+      : {}),
   }));
-}
-
-function missingSeriesReason(node: EnergyLogDataset["subsystems"][number]) {
-  if (node.currentA.values.length === 0) return "该节点没有有效的 Supply 电流样本。";
-  if (node.powerW.values.length === 0) return "该节点没有有效的功率样本。";
-  if (node.energyWh.values.length === 0) return "该节点没有有效的累计能量样本。";
-  return undefined;
 }

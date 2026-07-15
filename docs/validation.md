@@ -53,7 +53,7 @@ AdvantageKit 使用 `/DriverStation/Enabled`、`Autonomous`、`Test` 与 `MatchT
 
 ## Supply Current 限流历史模拟
 
-自动回归覆盖：多目标唯一且不形成祖先/后代重叠；电流和功率按 held 比例缩放；累计 Wh 只缩放正增量；存在 Enabled 时平均功率排除 Disabled；robot residual 不从 subsystem 重建；源 typed arrays 不修改。该报告不预测 Battery Voltage、Brownout、Stator Current、机构动作或完成时间。
+自动回归覆盖：V2 Manifest 只生成 Leader 电机组，Follower Supply Current 严格并入对应 Leader 且不生成独立目标；同一组不可重复，多组原子计算且与输入顺序无关；V1 明确不可用；电流、功率和正向输入 Wh 按 held 比例缩放，负值与不完整成员区间不编造扣减；存在 Enabled 时平均功率排除 Disabled；整机峰值只在 robot 时间轴计算 residual；源 canonical 与 packed typed arrays 不修改。该报告不预测 Battery Voltage、Brownout、Stator Current、机构动作或完成时间。
 
 ## v2.3 跨语言契约
 
@@ -121,7 +121,7 @@ pnpm vendordep:contract
 - 任意命名空间 EnergyLogger root，无队伍白名单；
 - v1 sample-and-hold、reset、区间、Brownout、模式、动态层级和历史对账；
 - V2.1/V2.2/V2.3 精确 Manifest、固定 entry、独立 producer timestamp、稀疏 held 值、packed 槽与 Worker transferable；
-- V2.1 RPS 与 V2.2/V2.3 `rad/s` 归一化后的 canonical 电流/功率/耗电、合并功耗明细、估算驱动效率和减速比推荐；
+- V2.1 RPS 与 V2.2/V2.3 `rad/s` 归一化后的 canonical 电流/功率/耗电、合并明细、估算驱动效率和减速比推荐；
 - CTRE Kraken X44/X60 曲线常数、空载损耗电流、同区间铜耗积分、电机覆盖率分类、异步电池电压事件、精确选区端点、长于 4096 区间的全量 `dt` 评分、Leader/Follower 名称和独立“电机”页；
 - V2 电池页的异步 sample-and-hold、非均匀 `dt`、正向 Wh/Ah、`I²t`、局部稳健拟合、独立负载阶跃、弱激励降级、Robot Mode 条件统计、低压与 Brownout 实测事件；
 - V1-only 不显示 V2 Card；V2 电流、功率和能量指标明确标为已注册电机口径；

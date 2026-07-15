@@ -319,6 +319,11 @@ export function appendEnergyV2FixtureSample(
   options: {
     driveStatorCurrentA?: number;
     indexerStatorCurrentA?: number;
+    robotCurrentA?: number;
+    robotVoltageV?: number;
+    driveLeaderSupplyCurrentA?: number;
+    driveFollowerSupplyCurrentA?: number;
+    indexerSupplyCurrentA?: number;
   } = {},
 ): void {
   const { builder, entries } = fixture;
@@ -326,22 +331,22 @@ export function appendEnergyV2FixtureSample(
   const indexerRotorVelocity = fixture.contractVersion === "2.1" ? 5 : 5 * Math.PI * 2;
   builder
     .int64(entries.robotTimestamp, timestampUs, timestampUs)
-    .double(entries.robotCurrent, timestampUs, 25)
-    .double(entries.robotVoltage, timestampUs, 12)
+    .double(entries.robotCurrent, timestampUs, options.robotCurrentA ?? 25)
+    .double(entries.robotVoltage, timestampUs, options.robotVoltageV ?? 12)
     .int64(entries["s0.sampleTimestampUs"], timestampUs, timestampUs)
     .string(entries["s0.state"], timestampUs, state.drive)
     .doubleArray(entries["s0.samples"], timestampUs, [
-      12,
+      options.driveLeaderSupplyCurrentA ?? 12,
       options.driveStatorCurrentA ?? 20,
       driveRotorVelocity,
-      8,
+      options.driveFollowerSupplyCurrentA ?? 8,
       Number.NaN,
       Number.NaN,
     ])
     .int64(entries["s1.sampleTimestampUs"], timestampUs, timestampUs)
     .string(entries["s1.state"], timestampUs, state.indexer)
     .doubleArray(entries["s1.samples"], timestampUs, [
-      5,
+      options.indexerSupplyCurrentA ?? 5,
       options.indexerStatorCurrentA ?? 8,
       indexerRotorVelocity,
     ]);
