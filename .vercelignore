@@ -1,0 +1,10 @@
+.agents/
+.github/
+.memory/
+docs/
+tests/
+/vendordep/
+coverage/
+playwright-report/
+test-results/
+*.wpilog

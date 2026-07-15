@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { meta } from "../../routes/power-analyzer";
-import { analysisWorkspacePageTitle } from "./analysis-workspace";
+import { AnalysisWorkspace, analysisWorkspacePageTitle } from "./analysis-workspace";
+import { FileDropZone } from "./file-drop-zone";
+
+const appLayoutSource = readFileSync(new URL("../../routes/_app.tsx", import.meta.url), "utf8");
 
 describe("analysis workspace page title", () => {
   it("uses only the app name before a log has been analyzed", () => {
@@ -10,5 +16,25 @@ describe("analysis workspace page title", () => {
 
   it("leaves analyzed navigation titles to the dashboard", () => {
     expect(analysisWorkspacePageTitle(true)).toBeNull();
+  });
+
+  it("keeps identity out of the cached loader shell without coupling upload readiness to auth", () => {
+    expect(appLayoutSource).toContain("await requireCurrentUser(request)");
+    expect(appLayoutSource).toContain("return { authenticated: true }");
+    expect(appLayoutSource).toContain("const auth = useAuth()");
+    expect(appLayoutSource).not.toContain("toPublicUser");
+    expect(appLayoutSource).not.toContain("AnalysisWorkspaceReadyContext");
+  });
+
+  it("omits the File input during SSR and enables it after the client mount gate opens", () => {
+    const serverMarkup = renderToStaticMarkup(createElement(AnalysisWorkspace));
+    const readyMarkup = renderToStaticMarkup(
+      createElement(FileDropZone, { ready: true, onFile: () => undefined }),
+    );
+
+    expect(serverMarkup).toContain('aria-disabled="true"');
+    expect(serverMarkup).not.toContain('type="file"');
+    expect(readyMarkup).toContain('aria-disabled="false"');
+    expect(readyMarkup).toContain('type="file"');
   });
 });

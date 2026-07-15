@@ -1,0 +1,360 @@
+import groovy.json.JsonSlurper
+import groovy.xml.XmlSlurper
+import org.gradle.util.GradleVersion
+
+import java.nio.charset.StandardCharsets
+import java.security.MessageDigest
+import java.util.zip.ZipEntry
+import java.util.zip.ZipFile
+import java.util.zip.ZipOutputStream
+
+plugins {
+    id "java-library"
+    id "maven-publish"
+    id "edu.wpi.first.GradleRIO" version "2026.2.1"
+}
+
+def javaVersion = JavaVersion.VERSION_17
+def artifactName = providers.gradleProperty("cyberPowerArtifactId").get()
+def requiredGradleVersion = providers.gradleProperty("cyberPowerGradleVersion").get()
+def wpilibRelease = providers.gradleProperty("wpilibVersion").get()
+def vendordepFile = layout.projectDirectory.file("../public/vendordep/CyberPower.json")
+def vendordepMavenDirectory = layout.projectDirectory.dir("../public/vendordep/maven")
+def blockedV1WriterVersions = ["2026.1.0", "2026.1.1"] as Set
+def immutableArtifacts = [
+    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.0/cyberpower-java-2026.2.0.jar":
+        "542503429b25b7d3da60e738244669410ba99db75b4d15dcf45d93bb878b2cd8",
+    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.1/cyberpower-java-2026.2.1.jar":
+        "b1e285b44233e6f129e6bbd863f206190844fdc1524733ee7cb540461560d6a5",
+    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.2/cyberpower-java-2026.2.2.jar":
+        "8abddc75f41d4323db27aecf7b806a677193cb0d9d106c2bdb177f6b8d67a02a",
+]
+def forbiddenV1ClassEntries = [
+    "com/nextinnovation/cyberpower/EnergyMotor.class",
+    "com/nextinnovation/cyberpower/EnergySupplyLoad.class",
+    'com/nextinnovation/cyberpower/EnergySubsystem$V1Aggregate.class',
+]
+def forbiddenV1ClassMarkers = [
+    "registerRobotSource",
+    "v1EnergyPath",
+    "V1Aggregate",
+    "BatteryVoltageVolt",
+    "TotalCurrentAmp",
+    "PowerWatt",
+    "EnergyJoule",
+]
+
+def rejectKnownV1Versions = { Collection<String> versions ->
+    Set<String> blockedVersions = versions.intersect(blockedV1WriterVersions)
+    if (!blockedVersions.isEmpty()) {
+        throw new GradleException(
+            "Published Maven repository contains blocked EnergyLogger V1 writer version(s): "
+                + blockedVersions.sort().join(", "),
+        )
+    }
+}
+
+def assertV2OnlyArtifact = { File artifact ->
+    if (!artifact.isFile() || artifact.length() == 0) {
+        throw new GradleException("Missing or empty published runtime artifact: ${artifact}")
+    }
+    try (ZipFile archive = new ZipFile(artifact)) {
+        Enumeration<? extends ZipEntry> entries = archive.entries()
+        while (entries.hasMoreElements()) {
+            ZipEntry entry = entries.nextElement()
+            if (entry.isDirectory() || !entry.name.endsWith(".class")) {
+                continue
+            }
+            if (forbiddenV1ClassEntries.contains(entry.name)) {
+                throw new GradleException(
+                    "Published artifact ${artifact.name} contains V1 writer API ${entry.name}",
+                )
+            }
+            String classBytes = new String(
+                archive.getInputStream(entry).readAllBytes(),
+                StandardCharsets.ISO_8859_1,
+            )
+            String marker = forbiddenV1ClassMarkers.find { classBytes.contains(it) }
+            if (marker != null) {
+                throw new GradleException(
+                    "Published artifact ${artifact.name} contains V1 writer marker '${marker}' "
+                        + "in ${entry.name}",
+                )
+            }
+        }
+    } catch (IOException error) {
+        throw new GradleException("Unable to inspect published artifact ${artifact}", error)
+    }
+}
+
+def assertImmutableArtifacts = { File repositoryDirectory ->
+    immutableArtifacts.each { relativePath, expectedSha256 ->
+        File artifact = new File(repositoryDirectory, relativePath)
+        if (!artifact.isFile()) {
+            throw new GradleException("Missing immutable historical artifact: ${artifact}")
+        }
+        String actualSha256 = MessageDigest.getInstance("SHA-256")
+            .digest(artifact.bytes)
+            .encodeHex()
+            .toString()
+        if (actualSha256 != expectedSha256) {
+            throw new GradleException(
+                "Immutable historical artifact changed: ${relativePath}; "
+                    + "expected ${expectedSha256}, received ${actualSha256}",
+            )
+        }
+    }
+}
+
+def validatePublishedV2Repository = { File repositoryDirectory ->
+    assertImmutableArtifacts(repositoryDirectory)
+    File artifactDirectory = new File(
+        repositoryDirectory,
+        "${project.group.toString().replace('.', '/')}/${artifactName}",
+    )
+    File metadataFile = new File(artifactDirectory, "maven-metadata.xml")
+    if (!metadataFile.isFile()) {
+        throw new GradleException("Missing Maven metadata: ${metadataFile}")
+    }
+    def metadata = new XmlSlurper(false, false).parse(metadataFile)
+    Set<String> metadataVersions = metadata.versioning.versions.version.collect { it.text() } as Set
+    if (metadataVersions.isEmpty()) {
+        throw new GradleException("Maven metadata must publish at least one V2 writer version")
+    }
+    List<File> versionDirectories = artifactDirectory.listFiles()?.findAll { it.isDirectory() } ?: []
+    rejectKnownV1Versions(
+        metadataVersions
+            + [metadata.versioning.latest.text(), metadata.versioning.release.text()]
+            + versionDirectories*.name,
+    )
+    Set<String> artifactVersions = new LinkedHashSet<>(metadataVersions)
+    versionDirectories.findAll {
+        new File(it, "${artifactName}-${it.name}.jar").isFile()
+    }.each { artifactVersions.add(it.name) }
+    artifactVersions.each { version ->
+        assertV2OnlyArtifact(
+            new File(artifactDirectory, "${version}/${artifactName}-${version}.jar"),
+        )
+    }
+    return artifactVersions
+}
+
+if (GradleVersion.current() != GradleVersion.version(requiredGradleVersion)) {
+    throw new GradleException(
+        "Cyber Power vendordep requires Gradle ${requiredGradleVersion}; received ${GradleVersion.current().version}",
+    )
+}
+
+java {
+    sourceCompatibility = javaVersion
+    targetCompatibility = javaVersion
+    withSourcesJar()
+    withJavadocJar()
+}
+
+dependencies {
+    compileOnly "edu.wpi.first.wpilibj:wpilibj-java:${wpilibRelease}"
+    compileOnly "edu.wpi.first.wpiutil:wpiutil-java:${wpilibRelease}"
+
+    testImplementation "edu.wpi.first.wpilibj:wpilibj-java:${wpilibRelease}"
+    testImplementation "edu.wpi.first.wpiutil:wpiutil-java:${wpilibRelease}"
+    testImplementation "org.junit.jupiter:junit-jupiter:5.10.1"
+    testRuntimeOnly "org.junit.platform:junit-platform-launcher"
+    testRuntimeOnly "us.hebi.quickbuf:quickbuf-runtime:1.4"
+
+    nativeRelease wpi.java.deps.wpilibJniRelease(wpi.platforms.desktop)
+}
+
+tasks.withType(JavaCompile).configureEach {
+    options.encoding = "UTF-8"
+    options.release = 17
+}
+
+tasks.withType(AbstractArchiveTask).configureEach {
+    preserveFileTimestamps = false
+    reproducibleFileOrder = true
+}
+
+tasks.withType(Javadoc).configureEach {
+    options.encoding = "UTF-8"
+    options.charSet = "UTF-8"
+    options.addStringOption("Xdoclint:none", "-quiet")
+}
+
+tasks.named("jar") {
+    manifest {
+        attributes(
+            "Automatic-Module-Name": "com.nextinnovation.cyberpower",
+            "Implementation-Version": project.version.toString(),
+        )
+    }
+}
+
+test {
+    useJUnitPlatform()
+}
+
+wpi.java.configureTestTasks(test)
+
+publishing {
+    publications {
+        cyberPower(MavenPublication) {
+            from components.java
+            groupId = project.group.toString()
+            artifactId = artifactName
+            version = project.version.toString()
+
+            pom {
+                name = "Cyber Power EnergyLogger"
+                description = "WPILib-only robot-side telemetry library for Cyber Power."
+                url = "https://github.com/nirobotics/cyber-power"
+            }
+        }
+    }
+
+    repositories {
+        maven {
+            name = "vendordep"
+            url = vendordepMavenDirectory.asFile.toURI()
+        }
+    }
+}
+
+tasks.register("validateVendordepJson") {
+    group = "verification"
+    description = "Validates the published V2-only descriptor and Maven repository."
+    inputs.file(vendordepFile)
+    inputs.dir(vendordepMavenDirectory)
+
+    doLast {
+        File descriptor = vendordepFile.asFile
+        if (!descriptor.isFile()) {
+            throw new GradleException("Missing vendordep descriptor: ${descriptor}")
+        }
+
+        def json = new JsonSlurper().parse(descriptor)
+        def expected = [
+            fileName: "CyberPower.json",
+            name: "Cyber Power",
+            version: project.version.toString(),
+            uuid: "82ed958d-ee21-437a-90e5-dfa702a2de63",
+            frcYear: "2026",
+            jsonUrl: "https://power.team8214.com/vendordep/CyberPower.json",
+        ]
+        expected.each { key, value ->
+            if (json[key] != value) {
+                throw new GradleException("Invalid ${key}: expected '${value}', received '${json[key]}'")
+            }
+        }
+
+        if (json.mavenUrls != ["https://power.team8214.com/vendordep/maven"]) {
+            throw new GradleException("mavenUrls must contain only the production Cyber Power Maven repository")
+        }
+        if (json.javaDependencies != [[
+            groupId: project.group.toString(),
+            artifactId: artifactName,
+            version: project.version.toString(),
+        ]]) {
+            throw new GradleException("javaDependencies does not match the published Maven coordinate")
+        }
+        if (json.jniDependencies != [] || json.cppDependencies != []) {
+            throw new GradleException("Cyber Power is Java-only; JNI and C++ dependency arrays must be empty")
+        }
+
+        Set<String> publishedVersions = validatePublishedV2Repository(vendordepMavenDirectory.asFile)
+        if (!publishedVersions.contains(project.version.toString())) {
+            throw new GradleException(
+                "Published Maven repository does not contain current V2 writer ${project.version}",
+            )
+        }
+    }
+}
+
+tasks.register("testVendordepReleaseGate") {
+    group = "verification"
+    description = "Tests that the release gate allows V2 history and rejects V1 writers."
+    outputs.upToDateWhen { false }
+
+    doLast {
+        def fixtureJar = { String entryName, String content ->
+            File artifact = new File(temporaryDir, "${UUID.randomUUID()}.jar")
+            try (ZipOutputStream archive = new ZipOutputStream(artifact.newOutputStream())) {
+                archive.putNextEntry(new ZipEntry(entryName))
+                archive.write(content.getBytes(StandardCharsets.ISO_8859_1))
+                archive.closeEntry()
+            }
+            return artifact
+        }
+        def expectRejection = { String expectedMessage, Closure validation ->
+            try {
+                validation()
+            } catch (GradleException error) {
+                if (!error.message.contains(expectedMessage)) {
+                    throw new GradleException(
+                        "Release gate failed for the wrong reason: ${error.message}",
+                        error,
+                    )
+                }
+                return
+            }
+            throw new GradleException(
+                "Release gate accepted a fixture containing '${expectedMessage}'",
+            )
+        }
+
+        rejectKnownV1Versions(["2026.2.0", "2026.2.1", "2026.2.2"])
+        blockedV1WriterVersions.each { blockedVersion ->
+            expectRejection(blockedVersion) {
+                rejectKnownV1Versions([blockedVersion, "2026.2.0"])
+            }
+        }
+
+        assertV2OnlyArtifact(fixtureJar(
+            "com/nextinnovation/cyberpower/EnergyLogger.class",
+            "V2-only",
+        ))
+        expectRejection("EnergyMotor.class") {
+            assertV2OnlyArtifact(fixtureJar(
+                "com/nextinnovation/cyberpower/EnergyMotor.class",
+                "relabeled V1 writer",
+            ))
+        }
+        expectRejection("EnergyJoule") {
+            assertV2OnlyArtifact(fixtureJar(
+                "com/nextinnovation/cyberpower/EnergyLogger.class",
+                "TotalEnergyJoule",
+            ))
+        }
+    }
+}
+
+tasks.named("check") {
+    dependsOn tasks.named("validateVendordepJson")
+    dependsOn tasks.named("testVendordepReleaseGate")
+}
+
+tasks.register("verifyPublishedVendordep") {
+    group = "verification"
+    description = "Publishes locally and verifies the Maven files consumed by GradleRIO."
+    dependsOn "publishCyberPowerPublicationToVendordepRepository"
+
+    doLast {
+        File artifactDirectory = new File(
+            vendordepMavenDirectory.asFile,
+            "com/nextinnovation/cyberpower/${artifactName}/${project.version}",
+        )
+        def requiredFiles = [
+            "${artifactName}-${project.version}.jar",
+            "${artifactName}-${project.version}-sources.jar",
+            "${artifactName}-${project.version}-javadoc.jar",
+            "${artifactName}-${project.version}.pom",
+        ]
+        requiredFiles.each { fileName ->
+            File publishedFile = new File(artifactDirectory, fileName)
+            if (!publishedFile.isFile() || publishedFile.length() == 0) {
+                throw new GradleException("Missing or empty Maven artifact: ${publishedFile}")
+            }
+        }
+        validatePublishedV2Repository(vendordepMavenDirectory.asFile)
+    }
+}

@@ -5,6 +5,11 @@ import { localizeLogIssue } from "./issue-localization";
 
 export function DataQualityDetails({ dataset }: { dataset: EnergyLogDataset }) {
   const issues = dataset.quality.issues;
+  const v2 = dataset.v2;
+  const v2MotorCount = v2?.subsystems.reduce(
+    (count, subsystem) => count + subsystem.motors.length,
+    0,
+  );
 
   return (
     <div className="grid gap-3 lg:grid-cols-[20rem_minmax(0,1fr)]">
@@ -43,6 +48,36 @@ export function DataQualityDetails({ dataset }: { dataset: EnergyLogDataset }) {
           </dd>
           <dt className="text-ink-dim">解析位置</dt>
           <dd className="min-w-0 text-left text-ink">本地浏览器</dd>
+          {v2 ? (
+            <>
+              <dt className="text-ink-dim">EnergyLogger 契约</dt>
+              <dd className="min-w-0 text-left font-mono text-ink">
+                {v2.contract.contractVersion}
+              </dd>
+              <dt className="text-ink-dim">记录库版本</dt>
+              <dd className="min-w-0 truncate text-left font-mono text-ink">
+                {v2.contract.libraryVersion}
+              </dd>
+              <dt className="text-ink-dim">子系统数量</dt>
+              <dd className="min-w-0 text-left font-mono text-ink">
+                {formatNumber(v2.subsystems.length, 0)}
+              </dd>
+              <dt className="text-ink-dim">电机数量</dt>
+              <dd className="min-w-0 text-left font-mono text-ink">
+                {formatNumber(v2MotorCount, 0)}
+              </dd>
+              <dt className="text-ink-dim">整机指标口径</dt>
+              <dd className="min-w-0 text-left text-ink">
+                已注册电机合计电流 × 电池电压
+              </dd>
+              <dt className="text-ink-dim">Stator Current 语义</dt>
+              <dd className="min-w-0 text-left text-ink">
+                {v2.contract.contractVersion === "2.3"
+                  ? "带符号（驱动 / 再生制动；后者不代表电池净回充）"
+                  : "无符号幅值"}
+              </dd>
+            </>
+          ) : null}
         </dl>
       </aside>
 
@@ -53,7 +88,9 @@ export function DataQualityDetails({ dataset }: { dataset: EnergyLogDataset }) {
             <div>
               <p className="text-sm font-semibold text-ink">未发现警告</p>
               <p className="mt-1 text-xs text-ink-dim">
-                已验证必需的总量字段和至少一组完整的动态子系统字段。
+                {v2
+                  ? `已验证 EnergyLogger ${v2.contract.contractVersion} 固定字段、Manifest 与电机样本。`
+                  : "已验证必需的总量字段和至少一组完整的动态子系统字段。"}
               </p>
             </div>
           </div>

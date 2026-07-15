@@ -33,4 +33,35 @@ describe("MetricsRail", () => {
     expect(markup).toContain("1m 15.0s");
     expect(markup).not.toContain(">持续时间<");
   });
+
+  it("labels every V2 electrical total as registered-motor scope", () => {
+    const analysis = {
+      range: { startUs: 0, endUs: 1_000_000, durationSeconds: 1 },
+      totals: {
+        energyWh: 1,
+        averagePowerW: 30,
+        peakPowerW: 40,
+        peakPowerTimestampUs: 1,
+        peakCurrentA: 4,
+        peakCurrentTimestampUs: 1,
+        brownoutCount: 0,
+        brownoutDurationSeconds: 0,
+        enabledDurationSeconds: 1,
+        effectiveDurationSeconds: 1,
+      },
+      subsystems: [],
+    } as unknown as RangeAnalysis;
+
+    const markup = renderToStaticMarkup(createElement(MetricsRail, {
+      analysis,
+      sourceContract: "v2",
+      onLocatePeakPower: () => undefined,
+      onLocatePeakCurrent: () => undefined,
+    }));
+
+    expect(markup).toContain("已注册电机能量");
+    expect(markup).toContain("已注册电机平均功率");
+    expect(markup).toContain("已注册电机峰值功率");
+    expect(markup).toContain("已注册电机合计电流峰值");
+  });
 });

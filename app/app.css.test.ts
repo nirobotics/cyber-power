@@ -26,8 +26,13 @@ describe("Cyber Apps shell theme", () => {
       "--accent: #9b7cff;",
     ];
 
-    for (const token of [...lightTokens, ...darkTokens]) {
+    for (const token of lightTokens) {
+      expect(occurrences(token), token).toBe(1);
+    }
+    for (const token of darkTokens) {
       expect(occurrences(token), token).toBe(2);
     }
+    expect(stylesheet).toContain(':root:not([data-theme="light"])');
+    expect(stylesheet).not.toContain(':root[data-theme="light"] {');
   });
 });

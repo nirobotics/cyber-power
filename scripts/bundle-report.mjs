@@ -9,6 +9,7 @@ const FIRST_ROUND_BUDGET = Object.freeze({
   echartsGzipBytes: 200 * 1_024,
   uploadInitialGzipBytes: 120 * 1_024,
   publicResourcesRawBytes: 120 * 1_024,
+  vendordepReleaseRawBytes: 200 * 1_024,
   pwaPrecacheBrotliBytes: 500 * 1_024,
 });
 
@@ -24,7 +25,7 @@ Options:
 
 Budget JSON fields (all optional):
   clientAssetsRawBytes, echartsGzipBytes, uploadInitialGzipBytes,
-  publicResourcesRawBytes, pwaPrecacheBrotliBytes`);
+  publicResourcesRawBytes, vendordepReleaseRawBytes, pwaPrecacheBrotliBytes`);
 }
 
 function parseArguments(argv) {
@@ -115,6 +116,44 @@ function isGeneratedPwaResource(relativePath) {
     name === "manifest.webmanifest" ||
     name === "registerSW.js" ||
     /^workbox-[\w-]+\.js$/.test(name);
+}
+
+function isVendordepResource(relativePath) {
+  return relativePath.startsWith("vendordep/");
+}
+
+function buildVendordepReport(records) {
+  const releasesByVersion = new Map();
+  const unversioned = [];
+  for (const record of records) {
+    const version = record.path
+      .split("/")
+      .find((segment) => /^\d{4}\.\d+\.\d+(?:[-+][\w.-]+)?$/.test(segment));
+    if (!version) {
+      unversioned.push(record);
+      continue;
+    }
+    const release = releasesByVersion.get(version) ?? [];
+    release.push(record);
+    releasesByVersion.set(version, release);
+  }
+  const releases = [...releasesByVersion]
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([version, releaseRecords]) => ({
+      version,
+      files: releaseRecords.map((record) => record.path),
+      ...addSizes(releaseRecords),
+    }));
+  return {
+    files: records.map((record) => record.path),
+    releases,
+    largestReleaseRawBytes: Math.max(0, ...releases.map((release) => release.rawBytes)),
+    unversioned: {
+      files: unversioned.map((record) => record.path),
+      ...addSizes(unversioned),
+    },
+    ...addSizes(records),
+  };
 }
 
 async function buildAssetRecords(clientRoot, publicRoot) {
@@ -271,7 +310,14 @@ async function main() {
   const assets = await buildAssetRecords(clientRoot, publicRoot);
   const recordsByPath = new Map(assets.map((record) => [record.path, record]));
   const clientAssets = assets.filter((record) => record.category === "client");
-  const publicResources = assets.filter((record) => record.category === "public");
+  const allPublicResources = assets.filter((record) => record.category === "public");
+  const vendordepResources = allPublicResources.filter((record) =>
+    isVendordepResource(record.path)
+  );
+  const publicResources = allPublicResources.filter(
+    (record) => !isVendordepResource(record.path),
+  );
+  const vendordep = buildVendordepReport(vendordepResources);
   const pwaResources = assets.filter((record) => record.category === "pwa");
   const manifest = await readReactRouterManifest(clientRoot, recordsByPath);
   const routeReport = buildRouteReport(manifest, recordsByPath);
@@ -286,11 +332,12 @@ async function main() {
     echartsGzipBytes: echarts.gzipBytes,
     uploadInitialGzipBytes: routeReport.uploadInitial.gzipBytes,
     publicResourcesRawBytes: addSizes(publicResources).rawBytes,
+    vendordepReleaseRawBytes: vendordep.largestReleaseRawBytes,
     pwaPrecacheBrotliBytes: pwaPrecache.brotliBytes,
   };
   const budget = evaluateBudget(await loadBudget(options.budget), actualBudgetValues);
   const report = {
-    schemaVersion: 1,
+    schemaVersion: 2,
     nodeVersion: process.versions.node,
     roots: {
       client: displayPath(clientRoot),
@@ -300,12 +347,14 @@ async function main() {
     groups: {
       clientAssets,
       publicResources,
+      vendordepResources,
       pwaResources,
     },
     totals: {
       all: addSizes(assets),
       clientAssets: addSizes(clientAssets),
       publicResources: addSizes(publicResources),
+      vendordepResources: addSizes(vendordepResources),
       pwaResources: addSizes(pwaResources),
     },
     keyChunks: {
@@ -315,6 +364,7 @@ async function main() {
       routes: routeReport.routes,
     },
     pwaPrecache,
+    vendordep,
     budget,
   };
   console.log(JSON.stringify(report, null, 2));

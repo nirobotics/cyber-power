@@ -1,8 +1,8 @@
 # 验证记录
 
-## 私有真实日志
+## 历史 v1 金标
 
-真实日志不进入 Git。当前金标：
+真实日志不进入 Git。当前 v1 金标：
 
 ```text
 filename: akit_26-07-12_15-41-02.wpilog
@@ -18,120 +18,128 @@ pnpm log:list -- "C:\path\akit_26-07-12_15-41-02.wpilog"
 pnpm log:analyze -- "C:\path\akit_26-07-12_15-41-02.wpilog" --json
 ```
 
-## 金标结果
-
 | 指标 | 结果 |
 |---|---:|
 | WPILOG | 1.0 / AdvantageKit |
 | 完整 records | 2,963,062 |
-| 最后可信 byte | 62,513,066 |
-| 可恢复尾截断 | 缺 33 bytes |
 | 能量范围 | 37.375794–555.366124 s |
-| 时长 | 517.990330 s |
 | 总能量 | 85.15297648087035 Wh |
 | 平均功率（Enabled-only） | 1359.1164895298145 W |
-| 峰值功率 | 4262.547700747947 W |
-| 峰值电流 | 509.314775390625 A |
+| 峰值功率 / 电流 | 4262.547700747947 W / 509.314775390625 A |
 | 最低电压 | 5.68804833984375 V |
 | Brownout | 41 次 / 4.486280 s |
 | Enabled | 222.133652 s |
-| 顶层对账差 | 约 1.84e-11 Wh |
 
-顶层子系统：
+预期只有尾截断恢复与单位 metadata 缺失 warning，不得 fatal。
 
-| 路径 | Wh | 占比 |
-|---|---:|---:|
-| swerve | 39.4834232497748 | 46.3676372588729% |
-| shooter | 23.1276987109062 | 27.1601765043490% |
-| intake | 12.9111233424494 | 15.1622689846346% |
-| indexer | 7.82752391220356 | 9.19230805039881% |
-| controls | 1.80320726551802 | 2.1176092017447% |
+## v1 尾随分隔符兼容
 
-预期 warnings：尾部截断已恢复、两个单位 metadata 缺失。不得出现 fatal。标准 AdvantageKit 不记录独立 Teleop 序列，Teleop 由 Enabled、Autonomous 与 Test 推导，因此不应产生缺失提示。
+以下日志用 `swerve/` 表示旧聚合节点。解析器必须规范为 ID `swerve`，保留原始显示路径；`swerve//drive` 等中间空段仍 fatal。
 
-## 旧版尾随分隔符兼容回归
+| 文件 | SHA-256 | records | 总能量 | fatal |
+|---|---|---:|---:|---:|
+| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | `2E066129EAFE018E59BDDBB425F53138A70397804C93D11234929AD00A0F56B0` | 1,789,890 | 60.260822 Wh | 0 |
+| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | `774E4DE470F5CA66E6C72244110C6D485143475D1A96F2B23E508A780EB99475` | 2,140,298 | 60.536190 Wh | 0 |
 
-以下两份私有日志使用 `swerve/` 表示聚合节点。解析器必须将单个尾随 `/` 规范为节点 ID `swerve`，同时保留原始显示路径；中间空段（如 `swerve//drive`）和规范化冲突仍必须 fatal。
+## Driver Station 状态
 
-| 文件 | SHA-256 | 大小 | records | 总能量 | 峰值功率 / 电流 | fatal |
-|---|---|---:|---:|---:|---:|---:|
-| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | `2E066129EAFE018E59BDDBB425F53138A70397804C93D11234929AD00A0F56B0` | 38,404,096 bytes | 1,789,890 | 60.260822 Wh | 3,802.852630 W / 516.941201 A | 0 |
-| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | `774E4DE470F5CA66E6C72244110C6D485143475D1A96F2B23E508A780EB99475` | 45,940,736 bytes | 2,140,298 | 60.536190 Wh | 3,453.081811 W / 501.044414 A | 0 |
-
-两份日志均只有 3 项可恢复提示：尾截断 1 项、单位 metadata 缺失 2 项。
-
-## Driver Station 状态契约回归
-
-真实 AdvantageKit 日志使用 `boolean` 的 `/DriverStation/Enabled`、`/DriverStation/Autonomous`、`/DriverStation/Test` 与 `int64` 的 `/DriverStation/MatchType`。日志没有独立 `/DriverStation/Teleop`；仅当 Enabled 为 true 且 Autonomous、Test 均已知为 false 时推导 Teleop。MatchType 映射为 `0=None`、`1=Practice`、`2=Qualification`、`3=Elimination`，其变化必须切分模式区间。
-
-按组合后的机器人模式边界，三份回归日志的默认比赛范围应为：
+AdvantageKit 使用 `/DriverStation/Enabled`、`Autonomous`、`Test` 与 `MatchType`。没有独立 Teleop entry；Teleop 只在 Enabled=true 且 Autonomous/Test=false 时推导。三份 v1 回归日志默认范围：
 
 | 文件 | 起点 | 终点 |
 |---|---:|---:|
-| `akit_26-07-12_15-41-02.wpilog` | 187.593231 s | 420.606922 s |
-| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | 129.761164 s | 293.815472 s |
-| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | 210.291942 s | 374.910003 s |
+| 金标 | 187.593231 s | 420.606922 s |
+| hopper e6 | 129.761164 s | 293.815472 s |
+| hopper e4 | 210.291942 s | 374.910003 s |
 
-## Supply Current 限流估算回归
+## Supply Current 限流历史模拟
 
-自动化回归覆盖以下模型约束：
+自动回归覆盖：多目标唯一且不形成祖先/后代重叠；电流和功率按 held 比例缩放；累计 Wh 只缩放正增量；存在 Enabled 时平均功率排除 Disabled；robot residual 不从 subsystem 重建；源 typed arrays 不修改。该报告不预测 Battery Voltage、Brownout、Stator Current、机构动作或完成时间。
 
-- 顶层终端节点可直接使用合计 Supply Current 上限；聚合节点必须由用户确认其代表同构电机组；
-- 多个互不重叠目标作为一次实时模拟原子计算，输入顺序不影响结果；重复节点和祖先/后代组合必须拒绝；
-- 模拟页路径表与子系统明细使用相同层级和同级排序，默认折叠；每个可见路径都可直接预填限流值并独立启用，不需要先添加或移除目标；
-- 停用行与关闭总开关都保留限流值和聚合确认；折叠路径中的已启用目标必须有可见提示，隐藏路径错误必须在表格外继续可见；
-- 电流和功率按 sample-and-hold 同比例缩放；高于已记录峰值的上限不改变结果，上限降低时估算节省量单调不减；
-- 累计 Wh 只缩放正增量，reset 分段处理；电流不大于 0 但功率或能量为正的区段保持原样；
-- 存在 `Enabled` 时平均功率排除 Disabled，全 Disabled 选区为 `0 W`；
-- 整机结果保留未选中负载的残差；明显负的整机扣减结果不得强制钳制为 0，而应保留逐目标结果并将整机估算标记为不可用；
-- 源数据的 reset、时间断层、非有限样本、负值、子序列缺失和对账差异会映射为显式估算提示；源 typed arrays 不得被修改。
+## v2.3 跨语言契约
 
-2026-07-14 在 Node 22.23.1 / pnpm 11.5.0 下使用三份真实日志完成双目标回放；每份均有 26 个可选节点，目标峰值未超过输入上限，输入顺序反转后报告字段逐项一致，高于历史峰值的上限产生严格零变化。估算器只流式生成报告，不再分配或返回未消费的模拟时间轴：
+Java vendordep 测试生成：
 
-| 日志 | 代表性双目标 | 节省能量 | 估算耗时 |
-| --- | --- | ---: | ---: |
-| `akit_26-07-12_15-41-02.wpilog` | `indexer=50A` + `swerve/drive/moduleBR=50A` | 4.401447 Wh | 12.237 ms |
-| `akit_26-05-02_14-23-15_hopper_e6.wpilog` | `indexer=50A` + 已确认 `shooter/flywheel=50A` | 4.456180 Wh | 7.511 ms |
-| `akit_26-05-02_14-03-42_hopper_e4.wpilog` | `indexer=50A` + 已确认 `shooter/flywheel=50A` | 4.908331 Wh | 10.233 ms |
+```text
+vendordep/build/generated-fixtures/cyber-power-v2.wpilog
+WPILOG 1.0 / CyberPowerV23
+13 entries / 47 complete records
+2 subsystems / 3 motors / 1 Follower
+```
 
-三份日志的整机估算均可用；两份旧日志中的 `swerve/` 尾随斜杠均正确规范化。日志仅从原下载位置读取，未复制或提交到仓库。
+验证命令：
 
-这些回归只验证历史反事实模型，不把模拟报告当作真实限流后的硬件测量。电池电压、Brownout、机构动作和 Stator Current 均不在预测范围内。
+```powershell
+pnpm vendordep:contract
+```
+
+脚本直接调用网页公开 parser，并断言：
+
+- V2-only 日志在没有 v1 totals/动态节点时选择 `sourceContract=v2`；
+- `contractVersion` 精确为 `2.3`，packed 原生转速使用 `rad/s`，Stator Current 保留符号；
+- Manifest 只有 subsystem `name/motors` 和 motor `name/type/analysisReduction/leader`；
+- `samples.width === motors.length * 3`；
+- Follower Stator Current 和原生 rotor velocity 槽精确为 `NaN`；
+- robot canonical power 等于 held Battery Voltage × 已注册电机合计 Supply Current；
+- 异步 subsystem 时间轴不会产生 robot 对 subsystem 的虚假对账 warning；
+- 分状态统计与每个 Leader 的同构电机组可生成。
+
+`tests/fixtures/wpilog-builder.ts` 另行生成固定 V2.1/V2.2/V2.3 合成日志，覆盖 V2.1 RPS 到 `rad/s` 的兼容归一化、三版物理指标兼容性、V2.3 signed Stator Current、大小写/namespace root 识别、稀疏 sample-and-hold、packed width、负 Supply Current、无有限 robot 电气区间、Follower 槽和 V1 独立回归。
+
+## v2.3 真实日志回归
+
+```text
+filename: akit_26-07-15_07-29-59.wpilog
+sha256: 413DB3393A350F217D16E884380FD3F6D3035F9BE1F6803E9F1CFF969C967158
+size: 75,710,464 bytes
+records: 2,901,736
+contract: 2.3
+library: 2026.2.2
+```
+
+`pnpm log:analyze` 识别 `/RealOutputs/energyLogger`，范围为 `39.797989–703.055780 s`，得到 `76.985659 Wh`、`998.081896 W` 平均功率、`3761.656929 W / 473.18 A` 峰值、`5.656636 V` 最低电压和 0 次 Brownout。文件尾缺 78 bytes 可恢复；除缺少 Brownout Voltage 单位元数据外没有契约错误。
+
+Manifest 包含 `swerve / intake / indexer / shooter` 4 个子系统、20 台物理电机和 13 个 Leader。实际 Leader/Follower 回归至少覆盖：`intake/rollerLeft → rollerRight`、`indexer/frontLeft → frontRight/backRight/backLeft`、`shooter/flywheelUpLeft → flywheelDownLeft/flywheelDownRight/flywheelUpRight`；独立 Leader 不显示自己的重复小字。每个 Leader 都生成与效率门禁同源的 `dt` 加权覆盖率和无效原因；减速比推荐使用完整合格区间而非最多 4096 点抽样，并输出单一推荐减速比、同区间当前/推荐铜耗 Wh、带符号差值和该差值占本组实测正向输入的比例；无可行候选时明确显示不可用。
+
+同一日志按默认比赛范围 `337.600690–644.034707 s` 验证电池代理：正向已注册电机输入 `75.3656 Wh`、正向电量 `8.8377 Ah`、平均电压 `9.4244 V`、最低电压 `5.6566 V`；17 个跨日志空洞的阶跃候选被拒绝，剩余 482 个独立负载阶跃中 472 个方向有效，等效压降代理中位数为 `16.371 mΩ`，62 个局部窗口中 55 个有效，中位数为 `17.003 mΩ`。两种独立方法量级一致，但结果仍只表示已注册电机负载下包含电池、线束、连接器、动态恢复和未记录负载的局部代理。该区间没有日志记录的 Brownout，也没有低于 `5.5 V` 阈值的区间。
+
+三次测量的 72.20 MiB V2.3 日志解析均值为 `571.291 ms`、P95 为 `584.809 ms`，区间分析均值为 `2.410 ms`，峰值 RSS 为 `231.68 MiB`；同一已解析数据上预热后五次电池代理分析均值为 `69.633 ms`、P95 为 `72.319 ms`。该性能结果来自本地 Node 24，生产部署仍固定 Node 22。
+
+## 自动测试
+
+```powershell
+pnpm typecheck
+pnpm lint
+pnpm test
+pnpm build
+pnpm bundle:check
+pnpm vendordep:contract
+```
+
+核心范围：
+
+- WPILOG header/control/typed payload、尾截断和中段损坏；
+- 任意命名空间 EnergyLogger root，无队伍白名单；
+- v1 sample-and-hold、reset、区间、Brownout、模式、动态层级和历史对账；
+- V2.1/V2.2/V2.3 精确 Manifest、固定 entry、独立 producer timestamp、稀疏 held 值、packed 槽与 Worker transferable；
+- V2.1 RPS 与 V2.2/V2.3 `rad/s` 归一化后的 canonical 电流/功率/耗电、合并功耗明细、估算驱动效率和减速比推荐；
+- CTRE Kraken X44/X60 曲线常数、空载损耗电流、同区间铜耗积分、电机覆盖率分类、异步电池电压事件、精确选区端点、长于 4096 区间的全量 `dt` 评分、Leader/Follower 名称和独立“电机”页；
+- V2 电池页的异步 sample-and-hold、非均匀 `dt`、正向 Wh/Ah、`I²t`、局部稳健拟合、独立负载阶跃、弱激励降级、Robot Mode 条件统计、低压与 Brownout 实测事件；
+- V1-only 不显示 V2 Card；V2 电流、功率和能量指标明确标为已注册电机口径；
+- 飞书登录、session、tenant、Supabase server-only 数据边界与离线缓存；
+- 图表共享游标、尖峰保留、子系统显隐、电池局部代理时间序列和模拟页报告。
 
 ## 性能与体积门禁
 
-2026-07-14 的正式基线使用 Node 22.23.1 / pnpm 11.5.0。WPILOG decoder 在隔离临时 worktree 中交替执行优化前后版本，各 7 次测量；记录数、可信 byte、issues、区间、能量、峰值、Brownout 与 Enabled-only 平均功率均保持一致：
+2026-07-14 的隔离 A/B 基线中，纯 TypeScript WPILOG decoder 在三份 v1 真实日志上提升约 30%–32%；本轮不引入 WASM。后续只有在新基准证明 CPU 瓶颈足以覆盖跨边界复制和构建成本时再评估。
 
-| 日志 | 优化前中位数 | 优化后中位数 | 改进 |
-| --- | ---: | ---: | ---: |
-| 金标 59.62 MiB | 746.777 ms | 521.891 ms | 30.1% |
-| hopper e6 36.63 MiB | 480.690 ms | 329.760 ms | 31.4% |
-| hopper e4 43.81 MiB | 544.869 ms | 372.657 ms | 31.6% |
+生产 build 后运行 `pnpm bundle:check`：
 
-绝对值受同进程加载两份模块影响，只用作严格 A/B；相对改进决定是否合入。纯 TypeScript 已超过门槛，本轮不引入 WASM。
+| 门禁 | 上限 |
+|---|---:|
+| Client assets raw | 1,310,720 B |
+| 上传页初始依赖 gzip | 122,880 B |
+| ECharts chunk gzip | 204,800 B |
+| App public resources raw | 122,880 B |
+| PWA precache Brotli | 512,000 B |
 
-生产 build 后运行 `pnpm bundle:check`，当前结果：
-
-| 门禁 | 当前值 | 上限 |
-| --- | ---: | ---: |
-| Client assets raw | 1,050,594 B | 1,310,720 B |
-| 上传页初始依赖 gzip | 117,364 B | 122,880 B |
-| ECharts chunk gzip | 184,890 B | 204,800 B |
-| Public resources raw | 63,322 B | 122,880 B |
-| PWA precache Brotli | 353,050 B | 512,000 B |
-
-预缓存重复 URL 与缺失 URL 均为 0。该门禁只依赖构建产物，可在 CI 中运行，不需要提交私有 WPILOG。
-
-## 自动测试范围
-
-- WPILOG header、control record、typed payload、尾截断和中段损坏；
-- 通用 UnknownTeam EnergyLogger root，确保无队伍白名单；
-- sample-and-hold、能量 reset、区间、Brownout、Enabled/Autonomous/Test/MatchType 状态机、动态层级和 reconciliation；
-- 尾随 `/` 聚合路径兼容、中间空段拒绝和规范化冲突拒绝；
-- 飞书 state、PKCE、returnTo、生产 callback、签名 Cookie、code exchange、tenant 校验与 Supabase 用户资料 upsert；
-- Worker progress/result/error、typed-array transferable、取消与同 requestId 替换；
-- 图表 min/max 包络抽样、阶梯采样保持、共享游标同步和三类子系统图，确保功率和电流尖峰不会被等步长抽样丢失；
-- 多目标 Supply Current 实时模拟、sample-and-hold 缩放、累计能量 reset、Enabled-only 平均功率、整机残差保留，以及“模拟”页报告与总开关；
-- 模拟功能不渲染专用图表且不接入整机/子系统图表，关闭总开关后配置保留、报告隐藏；
-- React Router 生产 build、PWA manifest/service worker 与客户端 secret 扫描。
-- bundle 初始依赖、ECharts、公共资源和 PWA 预缓存体积预算，以及重复/缺失预缓存 URL。
+预缓存重复 URL 与缺失 URL 必须为 0。

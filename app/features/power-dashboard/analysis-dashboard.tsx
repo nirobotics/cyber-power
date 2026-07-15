@@ -1,14 +1,17 @@
-import { Bot, Gauge, Network, ShieldCheck } from "lucide-react";
+import { BatteryMedium, Bot, Cog, Gauge, Network, ShieldCheck } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type {
   AnalysisResult,
   TimeRange,
 } from "../log-analysis/core";
 import {
+  analyzeBatteryLoadResponse,
+  analyzeEnergyLoggerV2Range,
   analyzeEnergyRange,
   estimateSupplyCurrentLimits,
   SupplyLimitValidationError,
 } from "../log-analysis/core";
+import { BatteryAnalysisSection } from "./battery-analysis-section";
 import { DataQualityDetails } from "./data-quality-details";
 import { RobotTimeline, SubsystemTimelines, type TimelineFocus } from "./energy-timeline";
 import { FloatingTimeRange } from "./floating-time-range";
@@ -28,12 +31,56 @@ import {
   type SupplyLimitDraftPatch,
 } from "./supply-limit-simulator";
 import { selectDefaultTimeRange } from "./time-range";
+import { V2AnalysisSections } from "./v2-analysis-sections";
 
-type DashboardTab = "robot" | "subsystems" | "simulation" | "quality";
+type DashboardTab = "robot" | "battery" | "subsystems" | "motors" | "simulation" | "quality";
+
+type BatteryAnalysis = ReturnType<typeof analyzeBatteryLoadResponse>;
+type BatteryAnalysisResolver = (
+  active: boolean,
+  dataset: AnalysisResult["dataset"],
+  range: TimeRange,
+) => BatteryAnalysis | undefined;
+
+export function createBatteryAnalysisCache(
+  analyze: (
+    dataset: AnalysisResult["dataset"],
+    range: TimeRange,
+  ) => BatteryAnalysis = analyzeBatteryLoadResponse,
+): BatteryAnalysisResolver {
+  let cached: {
+    dataset: AnalysisResult["dataset"];
+    startUs: number;
+    endUs: number;
+    analysis: BatteryAnalysis;
+  } | null = null;
+
+  return (active, dataset, range) => {
+    if (cached &&
+      cached.dataset === dataset &&
+      cached.startUs === range.startUs &&
+      cached.endUs === range.endUs
+    ) {
+      return active ? cached.analysis : undefined;
+    }
+    if (!active) return undefined;
+
+    const analysis = analyze(dataset, range);
+    cached = {
+      dataset,
+      startUs: range.startUs,
+      endUs: range.endUs,
+      analysis,
+    };
+    return analysis;
+  };
+}
 
 const TABS = [
   { value: "robot", label: "整机", Icon: Bot },
+  { value: "battery", label: "电池", Icon: BatteryMedium },
   { value: "subsystems", label: "子系统", Icon: Network },
+  { value: "motors", label: "电机", Icon: Cog },
   { value: "simulation", label: "模拟", Icon: Gauge },
   { value: "quality", label: "数据质量", Icon: ShieldCheck },
 ] as const;
@@ -66,6 +113,9 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const [hiddenSubsystemIds, setHiddenSubsystemIds] = useState<Set<string>>(() => new Set());
   const [draftSupplyLimits, setDraftSupplyLimits] = useState<SupplyLimitDraft[]>([]);
   const [supplySimulationEnabled, setSupplySimulationEnabled] = useState(false);
+  const [getBatteryAnalysis] = useState<BatteryAnalysisResolver>(
+    () => createBatteryAnalysisCache(),
+  );
   const previewRangeRef = useRef(previewRange);
   const cursorUsRef = useRef(cursorUs);
   const cursorFrameRef = useRef<number | null>(null);
@@ -76,6 +126,19 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const analysis = useMemo(
     () => analyzeEnergyRange(dataset, committedRange),
     [committedRange, dataset],
+  );
+  const needsV2Analysis = tab === "subsystems" || tab === "motors";
+  const v2Analysis = useMemo(
+    () => (
+      needsV2Analysis
+        ? analyzeEnergyLoggerV2Range(dataset, committedRange)
+        : undefined
+    ),
+    [committedRange, dataset, needsV2Analysis],
+  );
+  const batteryAnalysis = useMemo(
+    () => getBatteryAnalysis(tab === "battery", dataset, committedRange),
+    [committedRange, dataset, getBatteryAnalysis, tab],
   );
   const supplyLimitTargets = useMemo(
     () => buildSupplyLimitTargetOptions(dataset, analysis),
@@ -310,6 +373,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
         <section className="card overflow-hidden">
           <MetricsRail
             analysis={analysis}
+            sourceContract={dataset.sourceContract}
             onLocatePeakPower={() => locatePeak("power")}
             onLocatePeakCurrent={() => locatePeak("current")}
           />
@@ -323,6 +387,24 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               cursorUs={displayedCursorUs}
               cursorPreviewActive={transientCursorUs !== null}
               focus={focus}
+              onCursorPreview={previewCursor}
+              onCursorCommit={commitCursorNow}
+            />
+          </div>
+        ) : null}
+
+        {tab === "battery" && batteryAnalysis ? (
+          <div
+            id="analysis-panel-battery"
+            role="tabpanel"
+            aria-labelledby="analysis-tab-battery"
+          >
+            <BatteryAnalysisSection
+              analysis={batteryAnalysis}
+              dataset={dataset}
+              range={committedRange}
+              cursorUs={displayedCursorUs}
+              cursorPreviewActive={transientCursorUs !== null}
               onCursorPreview={previewCursor}
               onCursorCommit={commitCursorNow}
             />
@@ -347,7 +429,25 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               onCursorCommit={commitCursorNow}
               onToggleSubsystem={toggleSubsystem}
             />
-            <SubsystemTable dataset={dataset} analysis={analysis} />
+            <SubsystemTable
+              dataset={dataset}
+              analysis={analysis}
+              v2Analysis={v2Analysis}
+              onLocateTimestamp={commitCursorNow}
+            />
+          </div>
+        ) : null}
+
+        {tab === "motors" ? (
+          <div
+            id="analysis-panel-motors"
+            role="tabpanel"
+            aria-labelledby="analysis-tab-motors"
+          >
+            <V2AnalysisSections
+              analysis={v2Analysis}
+              contractVersion={dataset.v2?.contract.contractVersion}
+            />
           </div>
         ) : null}
 
@@ -372,7 +472,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
           </div>
         ) : null}
 
-        {tab === "robot" || tab === "subsystems" || tab === "simulation" ? (
+        {tab === "robot" || tab === "battery" || tab === "subsystems" || tab === "motors" || tab === "simulation" ? (
           <FloatingTimeRange
             dataset={dataset}
             range={previewRange}

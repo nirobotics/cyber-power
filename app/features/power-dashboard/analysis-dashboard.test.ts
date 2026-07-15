@@ -1,15 +1,25 @@
 import { readFileSync } from "node:fs";
-import { describe, expect, it } from "vitest";
-import { dashboardPageTitle } from "./analysis-dashboard";
+import { describe, expect, it, vi } from "vitest";
+import type { AnalysisResult } from "../log-analysis/core";
+import { createBatteryAnalysisCache, dashboardPageTitle } from "./analysis-dashboard";
 
 const dashboardSource = readFileSync(new URL("./analysis-dashboard.tsx", import.meta.url), "utf8");
 
 describe("dashboardPageTitle", () => {
   it("uses the active navigation label and cyber-power suffix", () => {
     expect(dashboardPageTitle("robot")).toBe("整机 | cyber-power");
+    expect(dashboardPageTitle("battery")).toBe("电池 | cyber-power");
     expect(dashboardPageTitle("subsystems")).toBe("子系统 | cyber-power");
+    expect(dashboardPageTitle("motors")).toBe("电机 | cyber-power");
     expect(dashboardPageTitle("simulation")).toBe("模拟 | cyber-power");
     expect(dashboardPageTitle("quality")).toBe("数据质量 | cyber-power");
+  });
+
+  it("keeps the requested navigation order", () => {
+    const labels = ["整机", "电池", "子系统", "电机", "模拟", "数据质量"];
+    const positions = labels.map((label) => dashboardSource.indexOf(`label: "${label}"`));
+    expect(positions.every((position) => position >= 0)).toBe(true);
+    expect(positions).toEqual([...positions].sort((left, right) => left - right));
   });
 });
 
@@ -27,14 +37,89 @@ describe("peak location", () => {
   });
 });
 
+describe("EnergyLogger v2 sections", () => {
+  it("analyzes the committed range only for subsystem and motor pages", () => {
+    const analysisStart = dashboardSource.indexOf("const v2Analysis = useMemo");
+    const analysisEnd = dashboardSource.indexOf("const batteryAnalysis", analysisStart);
+    const block = dashboardSource.slice(analysisStart, analysisEnd);
+    expect(dashboardSource).toContain(
+      'const needsV2Analysis = tab === "subsystems" || tab === "motors"',
+    );
+    expect(block).toContain("needsV2Analysis");
+    expect(block).toContain("analyzeEnergyLoggerV2Range(dataset, committedRange)");
+    expect(block).toContain("[committedRange, dataset, needsV2Analysis]");
+    expect(block).not.toContain("[committedRange, dataset, tab]");
+  });
+
+  it("keeps motor analysis out of the subsystem page and renders it on the motor page", () => {
+    const subsystemStart = dashboardSource.indexOf('{tab === "subsystems"');
+    const motorStart = dashboardSource.indexOf('{tab === "motors"');
+    const simulationStart = dashboardSource.indexOf('{tab === "simulation"');
+    const subsystemPanel = dashboardSource.slice(subsystemStart, motorStart);
+    const motorPanel = dashboardSource.slice(motorStart, simulationStart);
+
+    expect(subsystemStart).toBeGreaterThanOrEqual(0);
+    expect(motorStart).toBeGreaterThan(subsystemStart);
+    expect(simulationStart).toBeGreaterThan(motorStart);
+    expect(subsystemPanel).not.toContain("V2AnalysisSections");
+    expect(subsystemPanel).toContain("v2Analysis={v2Analysis}");
+    expect(motorPanel).toContain("<V2AnalysisSections");
+    expect(motorPanel).not.toContain("onCursorPreview={previewCursor}");
+    expect(motorPanel).not.toContain("onCursorCommit={commitCursorNow}");
+  });
+});
+
+describe("battery load response", () => {
+  it("lazily reuses the same dataset and committed-range analysis across tab revisits", () => {
+    const analysis = {
+      status: "unavailable",
+      reason: "V2_REQUIRED",
+      limitations: [],
+    } as const;
+    const analyze = vi.fn(() => analysis);
+    const getBatteryAnalysis = createBatteryAnalysisCache(analyze);
+    const dataset = {} as AnalysisResult["dataset"];
+    const range = { startUs: 1_000_000, endUs: 2_000_000 };
+
+    expect(getBatteryAnalysis(false, dataset, range)).toBeUndefined();
+    expect(analyze).not.toHaveBeenCalled();
+
+    expect(getBatteryAnalysis(true, dataset, range)).toBe(analysis);
+    expect(getBatteryAnalysis(false, dataset, range)).toBeUndefined();
+    expect(getBatteryAnalysis(true, dataset, range)).toBe(analysis);
+    expect(analyze).toHaveBeenCalledOnce();
+
+    expect(getBatteryAnalysis(true, dataset, { ...range, endUs: 3_000_000 })).toBe(analysis);
+    expect(analyze).toHaveBeenCalledTimes(2);
+    expect(getBatteryAnalysis(true, {} as AnalysisResult["dataset"], range)).toBe(analysis);
+    expect(analyze).toHaveBeenCalledTimes(3);
+  });
+
+  it("keeps the chart range aligned with the committed analysis", () => {
+    expect(dashboardSource).toContain(
+      'getBatteryAnalysis(tab === "battery", dataset, committedRange)',
+    );
+    expect(dashboardSource).toContain("<BatteryAnalysisSection");
+    expect(dashboardSource).toContain("analysis={batteryAnalysis}");
+    expect(dashboardSource).toContain("range={committedRange}");
+    const batteryPanelStart = dashboardSource.indexOf('{tab === "battery"');
+    const subsystemPanelStart = dashboardSource.indexOf('{tab === "subsystems"');
+    expect(dashboardSource.slice(batteryPanelStart, subsystemPanelStart)).not.toContain(
+      "range={previewRange}",
+    );
+  });
+});
+
 describe("live supply limit simulation", () => {
   it("moves the report to its own navigation panel without modifying subsystem charts", () => {
     const subsystemStart = dashboardSource.indexOf('{tab === "subsystems"');
+    const motorStart = dashboardSource.indexOf('{tab === "motors"');
     const simulationStart = dashboardSource.indexOf('{tab === "simulation"');
     const qualityStart = dashboardSource.indexOf('{tab === "quality"');
 
     expect(subsystemStart).toBeGreaterThanOrEqual(0);
-    expect(simulationStart).toBeGreaterThan(subsystemStart);
+    expect(motorStart).toBeGreaterThan(subsystemStart);
+    expect(simulationStart).toBeGreaterThan(motorStart);
     expect(qualityStart).toBeGreaterThan(simulationStart);
     expect(dashboardSource.slice(subsystemStart, simulationStart)).not.toContain("SupplyLimitSimulator");
     expect(dashboardSource.slice(subsystemStart, simulationStart)).toContain("SubsystemTimelines");
@@ -61,6 +146,8 @@ describe("live supply limit simulation", () => {
   });
 
   it("keeps the shared time range available on the simulation page", () => {
-    expect(dashboardSource).toContain('tab === "robot" || tab === "subsystems" || tab === "simulation"');
+    expect(dashboardSource).toContain(
+      'tab === "robot" || tab === "battery" || tab === "subsystems" || tab === "motors" || tab === "simulation"',
+    );
   });
 });

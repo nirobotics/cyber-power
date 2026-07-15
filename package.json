@@ -14,7 +14,8 @@
     "bundle:check": "node scripts/bundle-report.mjs --check",
     "log:list": "tsx scripts/log-list.ts",
     "log:analyze": "tsx scripts/log-analyze.ts",
-    "log:benchmark": "tsx scripts/log-benchmark.ts"
+    "log:benchmark": "tsx scripts/log-benchmark.ts",
+    "vendordep:contract": "tsx scripts/verify-vendordep-fixture.ts"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.86.2",

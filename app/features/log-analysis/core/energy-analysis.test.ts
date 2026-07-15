@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   appendEnergySample,
+  appendEnergyV2FixtureSample,
   buildEnergyFixture,
+  buildEnergyV2Fixture,
   WpiLogFixtureBuilder,
 } from "../../../../tests/fixtures/wpilog-builder";
 import {
@@ -435,6 +437,39 @@ describe("generic EnergyLogger analysis", () => {
     await expect(parseEnergyLog(builder.build())).rejects.toSatisfy((error: unknown) =>
       errorHasCode(error, "AMBIGUOUS_ENERGY_ROOT"),
     );
+  });
+
+  it("preserves RealOutputs priority when a legacy real root coexists with a valid v2 replay root", async () => {
+    const fixture = buildEnergyV2Fixture("/Team9999/ReplayOutputs/energyLogger");
+    appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "AUTO", indexer: "IDLE" }, 1);
+    appendEnergyV2FixtureSample(fixture, 2_000_000, { drive: "AUTO", indexer: "SCORE" }, 2);
+
+    const realRoot = "/Team9999/RealOutputs/energyLogger";
+    const realEntries = {
+      totalCurrent: fixture.builder.start(`${realRoot}/totalCurrent`, "double"),
+      totalPower: fixture.builder.start(`${realRoot}/totalPower`, "double"),
+      totalEnergy: fixture.builder.start(`${realRoot}/totalEnergy`, "double"),
+      current: fixture.builder.start(`${realRoot}/current/legacy`, "double"),
+      power: fixture.builder.start(`${realRoot}/power/legacy`, "double"),
+      energy: fixture.builder.start(`${realRoot}/energy/legacy`, "double"),
+    };
+    appendEnergySample(fixture.builder, realEntries, 1_000_000, {
+      current: 1,
+      power: 12,
+      energy: 0,
+    });
+    appendEnergySample(fixture.builder, realEntries, 2_000_000, {
+      current: 1,
+      power: 12,
+      energy: 1,
+    });
+
+    const dataset = await parseEnergyLog(fixture.builder.build());
+
+    expect(dataset.root).toBe("/Team9999/RealOutputs/energyLogger");
+    expect(dataset.sourceContract).toBe("v1");
+    expect(dataset.v2).toBeUndefined();
+    expect(dataset.quality.issues.some((issue) => issue.code === "SIM_OR_REPLAY_LOG")).toBe(false);
   });
 
   it("rejects normalized path collisions", async () => {

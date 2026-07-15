@@ -22,7 +22,24 @@ export type LogIssueCode =
   | "NEGATIVE_VALUE"
   | "NONFINITE_VALUE_DROPPED"
   | "SIM_OR_REPLAY_LOG"
-  | "PARTIAL_SUBSERIES";
+  | "PARTIAL_SUBSERIES"
+  | "V2_CONTRACT_INCOMPLETE"
+  | "V2_CONTRACT_CHANGED"
+  | "V2_CONTRACT_VERSION_INVALID"
+  | "V2_CONTRACT_MAJOR_UNSUPPORTED"
+  | "V2_LIBRARY_VERSION_INVALID"
+  | "V2_MANIFEST_INVALID_JSON"
+  | "V2_MANIFEST_INVALID"
+  | "V2_MANIFEST_DUPLICATE_NAME"
+  | "V2_MANIFEST_INVALID_RATIO"
+  | "V2_MANIFEST_UNKNOWN_MOTOR_TYPE"
+  | "V2_MANIFEST_INVALID_LEADER"
+  | "V2_ENTRY_MISSING"
+  | "V2_ENTRY_TYPE_MISMATCH"
+  | "V2_PACKED_WIDTH_MISMATCH"
+  | "V2_SAMPLE_TIMESTAMP_INVALID"
+  | "V2_SAMPLE_TIMESTAMP_ROLLBACK"
+  | "V2_FOLLOWER_SLOT_INVALID";
 
 export interface LogIssue {
   severity: IssueSeverity;
@@ -100,6 +117,47 @@ export interface IntegerSeries {
   entryName: string;
 }
 
+export interface StringSeries {
+  timestampsUs: Float64Array;
+  values: string[];
+  entryName: string;
+}
+
+export interface PackedNumericSeries extends NumericSeries {
+  /** Number of descriptor-ordered values in each sample row. */
+  width: number;
+}
+
+export interface SampleTimestampSeries {
+  /** WPILOG record timestamps used to sample-and-hold this field. */
+  timestampsUs: Float64Array;
+  /** Producer clock timestamps carried by the int64 entry. */
+  values: Float64Array;
+  entryName: string;
+}
+
+export interface EnergyLogV2SubsystemDataset {
+  id: string;
+  name: string;
+  motors: import("./v2-contract").EnergyLoggerV2MotorDescriptor[];
+  sampleTimestampUs: SampleTimestampSeries;
+  state: StringSeries;
+  /**
+   * Canonical rows: [signed supply A, stator A, raw rotor rad/s] per motor. V2.1 rotor
+   * velocity is normalized on parse; V2.1/V2.2 Stator is a magnitude, while V2.3 keeps
+   * its motoring-positive/regeneration-negative sign.
+   */
+  motorSamples: PackedNumericSeries;
+}
+
+export interface EnergyLogV2Dataset {
+  contract: import("./v2-contract").EnergyLoggerV2Contract;
+  robotSampleTimestampUs: SampleTimestampSeries;
+  robotSupplyCurrentAmps: NumericSeries;
+  robotBatteryVoltageVolts: NumericSeries;
+  subsystems: EnergyLogV2SubsystemDataset[];
+}
+
 export interface TimeRange {
   startUs: number;
   endUs: number;
@@ -173,6 +231,10 @@ export interface EnergyLogDataset {
     modes: ModeInterval[];
   };
   quality: DataQuality;
+  /** Identifies which on-robot contract supplied the canonical electrical series. */
+  sourceContract?: "v1" | "v2";
+  /** Present only when a supported fixed EnergyLogger V2 surface validates completely. */
+  v2?: EnergyLogV2Dataset;
 }
 
 export interface SubsystemRangeMetrics {

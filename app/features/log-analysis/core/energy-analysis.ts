@@ -1,4 +1,7 @@
 import { LogAnalysisError, fatalIssue, warningIssue } from "./errors";
+import { rangeIntersections, upperBound } from "./time-series";
+import { EnergyLoggerV2Collector } from "./v2-log-parser";
+import { deriveEnergyLoggerV2Core } from "./v2-metrics";
 import { decodeWpiLog, type WpiLogDataRecord } from "./wpilog-decoder";
 import type {
   AnalysisResult,
@@ -301,13 +304,17 @@ function finalizeInteger(series: MutableSeries): IntegerSeries {
 function rootPriority(root: string): number {
   const namespace = root.slice(0, -"/energyLogger".length);
   const segments = namespace.split("/").filter(Boolean);
-  const last = segments.at(-1);
-  if (last === "RealOutputs") return 0;
-  if (last === "ReplayOutputs") return 1;
+  const last = segments.at(-1)?.toLowerCase();
+  if (last === "realoutputs") return 0;
+  if (last === "replayoutputs") return 1;
   return 2;
 }
 
-function chooseRoot(seriesByName: Map<string, MutableSeries>): string {
+function chooseRoot(
+  seriesByName: Map<string, MutableSeries>,
+  validV2Roots: ReadonlySet<string>,
+  candidateV2Roots: ReadonlySet<string>,
+): { root: string; kind: "v1" | "v2" } {
   const rootKinds = new Map<string, Set<string>>();
   for (const name of seriesByName.keys()) {
     const parsed = parseEnergyName(name);
@@ -316,12 +323,21 @@ function chooseRoot(seriesByName: Map<string, MutableSeries>): string {
     kinds.add(parsed.kind);
     rootKinds.set(parsed.root, kinds);
   }
-  const candidates = [...rootKinds]
+  const v1Candidates = [...rootKinds]
     .filter(([, kinds]) =>
       ["totalCurrent", "totalPower", "totalEnergy"].every((kind) => kinds.has(kind)),
     )
     .map(([root]) => root);
-  if (candidates.length === 0) {
+  const candidates = new Map<string, "v1" | "v2">(
+    v1Candidates.map((root) => [root, "v1"]),
+  );
+  // Preserve the existing RealOutputs/ReplayOutputs priority across contract versions. A valid
+  // V2 surface only wins over V1 when both contracts occupy the same root.
+  for (const root of validV2Roots) candidates.set(root, "v2");
+  if (candidates.size === 0) {
+    for (const root of candidateV2Roots) candidates.set(root, "v2");
+  }
+  if (candidates.size === 0) {
     throw new LogAnalysisError(
       fatalIssue(
         "MISSING_ENERGY_TOTALS",
@@ -332,14 +348,18 @@ function chooseRoot(seriesByName: Map<string, MutableSeries>): string {
   }
 
   for (const priority of [0, 1, 2]) {
-    const atPriority = candidates.filter((root) => rootPriority(root) === priority);
-    if (atPriority.length === 1) return atPriority[0];
+    const atPriority = [...candidates].filter(([root]) => rootPriority(root) === priority);
+    if (atPriority.length === 1) {
+      const [root, kind] = atPriority[0];
+      return { root, kind };
+    }
     if (atPriority.length > 1) {
+      const roots = atPriority.map(([root]) => root);
       throw new LogAnalysisError(
         fatalIssue(
           "AMBIGUOUS_ENERGY_ROOT",
-          `Multiple EnergyLogger roots have the same selection priority: ${atPriority.join(", ")}`,
-          { details: { roots: atPriority, priority } },
+          `Multiple EnergyLogger roots have the same selection priority: ${roots.join(", ")}`,
+          { details: { roots, priority } },
         ),
       );
     }
@@ -551,17 +571,6 @@ function optionalInteger(
   }
   if (series.integerValues.length === 0) return undefined;
   return finalizeInteger(series);
-}
-
-function upperBound(values: Float64Array, target: number): number {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (values[middle] <= target) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function heldNumeric(series: NumericSeries, timestampUs: number, fallback = 0): number {
@@ -786,6 +795,7 @@ export async function parseEnergyLog(
   source: WpiLogSource,
   options: ParseOptions = {},
 ): Promise<EnergyLogDataset> {
+  const v2Collector = new EnergyLoggerV2Collector();
   const seriesByName = new Map<string, MutableSeries>();
   const bindings = new WeakMap<WpiLogEntry, EntryBinding>();
   const getSeries = (name: string): MutableSeries => {
@@ -801,6 +811,7 @@ export async function parseEnergyLog(
     source,
     {
       onStart(entry) {
+        v2Collector.onStart(entry);
         const energyName = parseEnergyName(entry.name);
         const optionalType = optionalExpectedType(entry.name);
         if (!energyName && !optionalType) return;
@@ -814,6 +825,7 @@ export async function parseEnergyLog(
         if (binding) binding.series.metadata = entry.metadata;
       },
       onData(record) {
+        v2Collector.onData(record);
         const binding = bindings.get(record.entry);
         if (binding) readBoundValue(record, binding);
       },
@@ -822,13 +834,140 @@ export async function parseEnergyLog(
   );
 
   const issues = [...listing.issues];
-  const root = chooseRoot(seriesByName);
+  const selectedRoot = chooseRoot(
+    seriesByName,
+    v2Collector.validContractRoots(),
+    v2Collector.candidateRoots(),
+  );
+  const root = selectedRoot.root;
   if (rootPriority(root) === 1) {
     issues.push(
       warningIssue("SIM_OR_REPLAY_LOG", `Using replay EnergyLogger root ${root}`, {
         details: { root },
       }),
     );
+  }
+
+  if (selectedRoot.kind === "v2") {
+    const collected = v2Collector.finalize(root);
+    issues.push(...collected.issues);
+    if (!collected.v2) {
+      const fatalIssues = collected.issues.length > 0
+        ? collected.issues.map((entry) => ({ ...entry, severity: "fatal" as const }))
+        : [fatalIssue("V2_CONTRACT_INCOMPLETE", "EnergyLogger V2 contract is incomplete")];
+      throw new LogAnalysisError(fatalIssues);
+    }
+
+    let derived: ReturnType<typeof deriveEnergyLoggerV2Core>;
+    try {
+      derived = deriveEnergyLoggerV2Core(collected.v2);
+    } catch (error) {
+      throw new LogAnalysisError(
+        fatalIssue(
+          "NO_FINITE_ENERGY_DATA",
+          error instanceof Error ? error.message : "EnergyLogger V2 has no usable samples",
+        ),
+      );
+    }
+
+    const namespace = root === "energyLogger" ? "" : root.slice(0, -"/energyLogger".length);
+    const brownedOut = optionalBoolean(
+      findOptional(seriesByName, namespace, "SystemStats/BrownedOut"),
+      "Browned-out state",
+      issues,
+    );
+    const brownoutVoltageV = optionalNumeric(
+      findOptional(seriesByName, namespace, "SystemStats/BrownoutVoltage"),
+      "Brownout voltage",
+      issues,
+    );
+    const enabled = optionalBoolean(
+      findOptional(seriesByName, namespace, "DriverStation/Enabled"),
+      "Driver Station enabled state",
+      issues,
+    );
+    const autonomous = optionalBoolean(
+      findOptional(seriesByName, namespace, "DriverStation/Autonomous"),
+      "Driver Station autonomous state",
+      issues,
+    );
+    const test = optionalBoolean(
+      findOptional(seriesByName, namespace, "DriverStation/Test"),
+      "Driver Station test state",
+      issues,
+    );
+    const matchType = optionalInteger(
+      findOptional(seriesByName, namespace, "DriverStation/MatchType"),
+      "Driver Station match type",
+      issues,
+    );
+    const { energyStartUs, energyEndUs } = derived.bounds;
+    if (derived.droppedNonfiniteSamples > 0) {
+      issues.push(
+        warningIssue(
+          "NONFINITE_VALUE_DROPPED",
+          `EnergyLogger V2 contains ${derived.droppedNonfiniteSamples} unavailable required samples`,
+          { details: { droppedNonfiniteSamples: derived.droppedNonfiniteSamples } },
+        ),
+      );
+    }
+    const fullTotalEnergy = cumulativeDelta(
+      derived.totalEnergyWh,
+      energyStartUs,
+      energyEndUs,
+    ).energy;
+    // In V2 the robot Supply Current is authoritative. Independently clocked subsystem samples
+    // cannot be treated as a synchronous accounting identity at range edges.
+    const fullReconciliation = reconciliation(
+      fullTotalEnergy,
+      fullTotalEnergy,
+      options.reconciliationAbsoluteToleranceWh ?? DEFAULT_ABSOLUTE_TOLERANCE_WH,
+      options.reconciliationRelativeTolerance ?? DEFAULT_RELATIVE_TOLERANCE,
+    );
+    return {
+      header: listing.header,
+      file: listing.file,
+      root,
+      bounds: {
+        logStartUs: listing.file.firstTimestampUs ?? energyStartUs,
+        logEndUs: listing.file.lastTimestampUs ?? energyEndUs,
+        energyStartUs,
+        energyEndUs,
+      },
+      series: {
+        totalCurrentA: derived.totalCurrentA,
+        totalPowerW: derived.totalPowerW,
+        totalEnergyWh: derived.totalEnergyWh,
+        batteryVoltageV: derived.batteryVoltageV,
+        brownedOut,
+        brownoutVoltageV,
+        enabled,
+        autonomous,
+        test,
+        matchType,
+      },
+      subsystems: derived.subsystems,
+      segments: {
+        brownouts: booleanIntervals(brownedOut, energyStartUs, energyEndUs),
+        enabled: booleanIntervals(enabled, energyStartUs, energyEndUs),
+        modes: modeIntervals(
+          enabled,
+          autonomous,
+          test,
+          matchType,
+          energyStartUs,
+          energyEndUs,
+        ),
+      },
+      quality: {
+        issues,
+        reconciliation: fullReconciliation,
+        droppedNonfiniteSamples: derived.droppedNonfiniteSamples,
+        resetCount: 0,
+      },
+      sourceContract: "v2",
+      v2: collected.v2,
+    };
   }
 
   const totalCurrentBuilder = seriesByName.get(`${root}/totalCurrent`)!;
@@ -984,7 +1123,6 @@ export async function parseEnergyLog(
     node.isAggregate = node.childrenIds.length > 0;
   }
   subsystems.sort((left, right) => left.id.localeCompare(right.id));
-
   const namespace = root === "energyLogger" ? "" : root.slice(0, -"/energyLogger".length);
   const batteryVoltageV = optionalNumeric(
     findOptional(seriesByName, namespace, "energyLogger/BatteryVoltageVolt") ??
@@ -1099,7 +1237,7 @@ export async function parseEnergyLog(
     droppedNonfiniteSamples,
     resetCount,
   };
-  return {
+  const dataset: EnergyLogDataset = {
     header: listing.header,
     file: listing.file,
     root,
@@ -1135,18 +1273,9 @@ export async function parseEnergyLog(
       ),
     },
     quality,
+    sourceContract: "v1",
   };
-}
-
-function rangeIntersections(intervals: TimeInterval[], range: TimeRange): TimeInterval[] {
-  const result: TimeInterval[] = [];
-  for (const interval of intervals) {
-    const startUs = Math.max(interval.startUs, range.startUs);
-    const endUs = Math.min(interval.endUs, range.endUs);
-    if (endUs <= startUs) continue;
-    result.push({ startUs, endUs, durationSeconds: (endUs - startUs) / 1_000_000 });
-  }
-  return result;
+  return dataset;
 }
 
 function calculateAveragePowerW(
@@ -1250,12 +1379,19 @@ export function analyzeEnergyRange(
     DEFAULT_ABSOLUTE_TOLERANCE_WH,
     Math.abs(baseTolerance.differenceWh),
   );
-  const rangeReconciliation = reconciliation(
-    totalEnergy,
-    topLevelEnergyWh,
-    absoluteTolerance,
-    DEFAULT_RELATIVE_TOLERANCE,
-  );
+  const rangeReconciliation = dataset.sourceContract === "v2"
+    ? reconciliation(
+        totalEnergy,
+        totalEnergy,
+        absoluteTolerance,
+        DEFAULT_RELATIVE_TOLERANCE,
+      )
+    : reconciliation(
+        totalEnergy,
+        topLevelEnergyWh,
+        absoluteTolerance,
+        DEFAULT_RELATIVE_TOLERANCE,
+      );
   const peakPower = peakNumericSample(
     dataset.series.totalPowerW,
     range.startUs,

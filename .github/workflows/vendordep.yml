@@ -1,0 +1,44 @@
+name: Vendordep
+
+on:
+  push:
+    paths:
+      - "vendordep/**"
+      - "public/vendordep/**"
+      - ".github/workflows/vendordep.yml"
+  pull_request:
+    paths:
+      - "vendordep/**"
+      - "public/vendordep/**"
+      - ".github/workflows/vendordep.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable Gradle wrapper
+        run: chmod +x vendordep/gradlew
+
+      - name: Build, test, and validate descriptor
+        run: ./vendordep/gradlew -p vendordep clean test build validateVendordepJson --stacktrace
+
+      - name: Publish and verify static Maven repository
+        run: ./vendordep/gradlew -p vendordep verifyPublishedVendordep --stacktrace

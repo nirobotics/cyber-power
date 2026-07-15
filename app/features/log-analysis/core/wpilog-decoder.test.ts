@@ -2,12 +2,134 @@ import { describe, expect, it } from "vitest";
 
 import { WpiLogFixtureBuilder } from "../../../../tests/fixtures/wpilog-builder";
 import { LogAnalysisError, listWpiLog } from "./index";
+import { decodeWpiLog, type WpiLogDataValue } from "./wpilog-decoder";
 
 async function* oneByteChunks(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
   for (const byte of bytes) yield Uint8Array.of(byte);
 }
 
 describe("WPILOG 1.0 decoder", () => {
+  it("decodes scalar and array values using the WPILOG little-endian encoding", async () => {
+    const builder = new WpiLogFixtureBuilder("typed-values");
+    const entries = {
+      string: builder.start("/Example/String", "string"),
+      strings: builder.start("/Example/Strings", "string[]"),
+      doubles: builder.start("/Example/Doubles", "double[]"),
+      booleans: builder.start("/Example/Booleans", "boolean[]"),
+      integers: builder.start("/Example/Integers", "int64[]"),
+      double: builder.start("/Example/Double", "double"),
+      boolean: builder.start("/Example/Boolean", "boolean"),
+      integer: builder.start("/Example/Integer", "int64"),
+    };
+    builder
+      .string(entries.string, 1, "电机 A")
+      .stringArray(entries.strings, 2, ["swerve", "电机 A", ""])
+      .doubleArray(entries.doubles, 3, [1.25, -2.5, Number.NaN])
+      .booleanArray(entries.booleans, 4, [true, false, true])
+      .int64Array(entries.integers, 5, [0x0102030405060708n, -2n])
+      .double(entries.double, 6, -123.5)
+      .boolean(entries.boolean, 7, true)
+      .int64(entries.integer, 8, -9n);
+
+    const values = new Map<string, WpiLogDataValue | undefined>();
+    await decodeWpiLog(oneByteChunks(builder.build()), {
+      onData(record) {
+        const value = record.value;
+        expect(record.value).toBe(value);
+        values.set(record.entry.name, value);
+      },
+    });
+
+    expect(values.get("/Example/String")).toEqual({ type: "string", data: "电机 A" });
+    expect(values.get("/Example/Strings")).toEqual({
+      type: "string[]",
+      data: ["swerve", "电机 A", ""],
+    });
+    expect(values.get("/Example/Doubles")).toEqual({
+      type: "double[]",
+      data: Float64Array.from([1.25, -2.5, Number.NaN]),
+    });
+    expect(values.get("/Example/Booleans")).toEqual({
+      type: "boolean[]",
+      data: [true, false, true],
+    });
+    expect(values.get("/Example/Integers")).toEqual({
+      type: "int64[]",
+      data: BigInt64Array.from([0x0102030405060708n, -2n]),
+    });
+    expect(values.get("/Example/Double")).toEqual({ type: "double", data: -123.5 });
+    expect(values.get("/Example/Boolean")).toEqual({ type: "boolean", data: true });
+    expect(values.get("/Example/Integer")).toEqual({ type: "int64", data: -9n });
+  });
+
+  it("decodes empty arrays", async () => {
+    const builder = new WpiLogFixtureBuilder();
+    const entries = {
+      strings: builder.start("/Example/Strings", "string[]"),
+      doubles: builder.start("/Example/Doubles", "double[]"),
+      booleans: builder.start("/Example/Booleans", "boolean[]"),
+      integers: builder.start("/Example/Integers", "int64[]"),
+    };
+    builder
+      .stringArray(entries.strings, 1, [])
+      .doubleArray(entries.doubles, 2, [])
+      .booleanArray(entries.booleans, 3, [])
+      .int64Array(entries.integers, 4, []);
+
+    const values: WpiLogDataValue[] = [];
+    await decodeWpiLog(builder.build(), {
+      onData(record) {
+        if (record.value) values.push(record.value);
+      },
+    });
+
+    expect(values).toEqual([
+      { type: "string[]", data: [] },
+      { type: "double[]", data: new Float64Array() },
+      { type: "boolean[]", data: [] },
+      { type: "int64[]", data: new BigInt64Array() },
+    ]);
+  });
+
+  it.each([
+    ["double[]", Uint8Array.of(1, 2, 3)],
+    ["int64[]", Uint8Array.of(1, 2, 3, 4, 5, 6, 7)],
+    ["string[]", Uint8Array.of(0, 0, 0)],
+    ["string[]", Uint8Array.of(1, 0, 0, 0, 4, 0, 0, 0, 0x61)],
+    ["string[]", Uint8Array.of(0, 0, 0, 0, 0xff)],
+  ])("rejects malformed %s payload lengths as middle corruption", async (type, payload) => {
+    const builder = new WpiLogFixtureBuilder();
+    const entry = builder.start("/Example/Value", type);
+    builder.raw(entry, 1, payload);
+
+    await expect(listWpiLog(builder.build())).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof LogAnalysisError &&
+        error.issues[0]?.code === "CORRUPT_RECORD_MIDDLE" &&
+        error.issues[0]?.entryName === "/Example/Value",
+    );
+  });
+
+  it.each([
+    ["string", Uint8Array.of(0xc3, 0x28)],
+    ["string[]", Uint8Array.of(1, 0, 0, 0, 2, 0, 0, 0, 0xc3, 0x28)],
+  ])("rejects invalid UTF-8 in %s payloads as middle corruption", async (type, payload) => {
+    const builder = new WpiLogFixtureBuilder();
+    const entry = builder.start("/Example/Value", type);
+    builder.raw(entry, 1, payload);
+
+    await expect(decodeWpiLog(builder.build(), {
+      onData(record) {
+        void record.value;
+      },
+    })).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof LogAnalysisError &&
+        error.issues[0]?.code === "CORRUPT_RECORD_MIDDLE" &&
+        error.issues[0]?.entryName === "/Example/Value",
+    );
+  });
+
   it("decodes control and data records across arbitrary chunk boundaries", async () => {
     const builder = new WpiLogFixtureBuilder("stream-test");
     const entry = builder.start("/Example/Value", "double", "{}");

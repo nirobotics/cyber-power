@@ -9,7 +9,13 @@ import type {
 import type { ComposeOption, ECharts } from "echarts/core";
 import { useEffect, useMemo, useRef, useSyncExternalStore, type ReactNode } from "react";
 import { getInitialTheme, THEME_EVENT, type ThemeMode } from "../../lib/theme";
-import type { EnergyLogDataset, NumericSeries, SubsystemNode, TimeRange } from "../log-analysis/core";
+import {
+  type EnergyLogDataset,
+  type NumericSeries,
+  type SubsystemNode,
+  type TimeRange,
+} from "../log-analysis/core";
+import { upperBound } from "../log-analysis/core/time-series";
 import { SUBSYSTEM_TIMELINE_COLORS } from "./subsystem-colors";
 
 type EChartsOption = ComposeOption<
@@ -19,6 +25,8 @@ type EChartsOption = ComposeOption<
   | DataZoomComponentOption
   | MarkAreaComponentOption
 >;
+
+export type TimelineEChartsOption = EChartsOption;
 
 const COLORS = {
   voltage: "#f5b82e",
@@ -90,11 +98,19 @@ const ROBOT_CHARTS = [
 }>;
 
 const ROBOT_LEGEND_ITEMS = [
-  { label: "电池电压", color: COLORS.voltage },
-  { label: "总电流", color: COLORS.current },
-  { label: "总功率", color: COLORS.power },
-  { label: "累计能量", color: COLORS.energy },
+  { metric: "voltage", label: "电池电压", color: COLORS.voltage },
+  { metric: "current", label: "总电流", color: COLORS.current },
+  { metric: "power", label: "总功率", color: COLORS.power },
+  { metric: "energy", label: "累计能量", color: COLORS.energy },
 ] as const;
+
+function robotMetricLabel(dataset: EnergyLogDataset, metric: RobotMetric, fallback: string): string {
+  if (dataset.sourceContract !== "v2") return fallback;
+  if (metric === "current") return "已注册电机合计电流";
+  if (metric === "power") return "已注册电机合计功率";
+  if (metric === "energy") return "已注册电机累计能量";
+  return fallback;
+}
 
 function TimelineChartCard({
   title,
@@ -147,7 +163,7 @@ export function RobotTimeline({
         {ROBOT_LEGEND_ITEMS.map((item) => (
           <span key={item.label} className="inline-flex items-center gap-1.5 text-xs text-ink-dim">
             <span className="h-0 w-4 border-t-2" style={{ borderColor: item.color }} aria-hidden />
-            {item.label}
+            {robotMetricLabel(dataset, item.metric, item.label)}
           </span>
         ))}
         {showThreshold ? (
@@ -159,7 +175,11 @@ export function RobotTimeline({
       </section>
 
       {ROBOT_CHARTS.map(({ metric, label, zoomId, ariaLabel, focus: metricFocus }) => (
-        <TimelineChartCard key={metric} title={label} ariaLabel={`整机${label}`}>
+        <TimelineChartCard
+          key={metric}
+          title={robotMetricLabel(dataset, metric, label)}
+          ariaLabel={`整机${robotMetricLabel(dataset, metric, label)}`}
+        >
           <TimelineChart
             dataset={dataset}
             option={options[metric]}
@@ -172,7 +192,9 @@ export function RobotTimeline({
             onCursorPreview={onCursorPreview}
             onCursorCommit={onCursorCommit}
             className="h-[300px] min-h-[260px]"
-            ariaLabel={ariaLabel}
+            ariaLabel={dataset.sourceContract === "v2" && metric !== "voltage"
+              ? `${robotMetricLabel(dataset, metric, label)}时间图`
+              : ariaLabel}
           />
         </TimelineChartCard>
       ))}
@@ -269,7 +291,7 @@ export function SubsystemTimelines({
   );
 }
 
-function TimelineChart({
+export function TimelineChart({
   dataset,
   option,
   zoomId,
@@ -409,7 +431,7 @@ export function createRobotTimelineOption(
       stepped: true,
     },
     current: {
-      label: "总电流",
+      label: dataset.sourceContract === "v2" ? "已注册电机合计电流" : "总电流",
       unit: "A",
       color: COLORS.current,
       id: "total-current",
@@ -417,7 +439,7 @@ export function createRobotTimelineOption(
       stepped: true,
     },
     power: {
-      label: "总功率",
+      label: robotMetricLabel(dataset, "power", "总功率"),
       unit: "W",
       color: COLORS.power,
       id: "total-power",
@@ -425,7 +447,7 @@ export function createRobotTimelineOption(
       stepped: true,
     },
     energy: {
-      label: "累计能量",
+      label: robotMetricLabel(dataset, "energy", "累计能量"),
       unit: "Wh",
       color: COLORS.energy,
       id: "total-energy",
@@ -626,6 +648,10 @@ export function bindTimelinePointerInteractions(
     chart.off("updateAxisPointer", handleAxisPointer);
     renderer.off("click", handleClick);
     container.removeEventListener("mouseleave", handleLeave);
+    if (localPreview.current !== null) {
+      localPreview.current = null;
+      onPreview(null);
+    }
   };
 }
 
@@ -826,17 +852,6 @@ function fullSeriesEnergy(series: NumericSeries) {
     previous = value;
   }
   return energy;
-}
-
-function upperBound(values: Float64Array, target: number) {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (values[middle] <= target) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function percent(value: number, minimum: number, maximum: number) {

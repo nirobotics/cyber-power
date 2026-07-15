@@ -22,7 +22,20 @@ export interface WpiLogDataRecord {
   timestampUs: number;
   payload: Uint8Array;
   offset: number;
+  value?: WpiLogDataValue;
 }
+
+export type WpiLogDataValue =
+  | { type: "boolean"; data: boolean }
+  | { type: "int64"; data: bigint }
+  | { type: "float"; data: number }
+  | { type: "double"; data: number }
+  | { type: "string"; data: string }
+  | { type: "boolean[]"; data: boolean[] }
+  | { type: "int64[]"; data: BigInt64Array }
+  | { type: "float[]"; data: Float32Array }
+  | { type: "double[]"; data: Float64Array }
+  | { type: "string[]"; data: string[] };
 
 export interface WpiLogDecoderHandlers {
   onHeader?: (header: WpiLogHeader) => void;
@@ -38,6 +51,153 @@ interface RecordHeader {
   timestampUs: number;
   headerLength: number;
   entry?: WpiLogEntry;
+}
+
+function corruptDataRecord(
+  entry: WpiLogEntry,
+  offset: number,
+  message: string,
+  details?: Record<string, unknown>,
+): LogAnalysisError {
+  return new LogAnalysisError(
+    fatalIssue("CORRUPT_RECORD_MIDDLE", message, {
+      offset,
+      entryName: entry.name,
+      details,
+    }),
+  );
+}
+
+function decodeUtf8(
+  bytes: Uint8Array,
+  entry: WpiLogEntry,
+  offset: number,
+): string {
+  try {
+    return utf8Decoder.decode(bytes);
+  } catch {
+    throw corruptDataRecord(entry, offset, `${entry.type} entry ${entry.name} contains invalid UTF-8`);
+  }
+}
+
+function decodeStringArray(
+  payload: Uint8Array,
+  entry: WpiLogEntry,
+  offset: number,
+  collect: boolean,
+): string[] | undefined {
+  const view = new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+  let cursor = 0;
+  const requireBytes = (length: number, context: string): void => {
+    if (length < 0 || cursor + length > payload.byteLength) {
+      throw corruptDataRecord(entry, offset, `${entry.type} entry ${entry.name} has an invalid ${context}`, {
+        payloadLength: payload.byteLength,
+        cursor,
+        requestedLength: length,
+      });
+    }
+  };
+
+  requireBytes(4, "array length");
+  const count = view.getUint32(cursor, true);
+  cursor += 4;
+  if (count > Math.floor((payload.byteLength - cursor) / 4)) {
+    throw corruptDataRecord(entry, offset, `${entry.type} entry ${entry.name} declares too many elements`, {
+      count,
+      payloadLength: payload.byteLength,
+    });
+  }
+
+  const values = collect ? new Array<string>(count) : undefined;
+  for (let index = 0; index < count; index += 1) {
+    requireBytes(4, `length for element ${index}`);
+    const length = view.getUint32(cursor, true);
+    cursor += 4;
+    requireBytes(length, `length for element ${index}`);
+    if (values) {
+      values[index] = decodeUtf8(payload.subarray(cursor, cursor + length), entry, offset);
+    }
+    cursor += length;
+  }
+  if (cursor !== payload.byteLength) {
+    throw corruptDataRecord(entry, offset, `${entry.type} entry ${entry.name} has trailing bytes`, {
+      payloadLength: payload.byteLength,
+      consumedLength: cursor,
+    });
+  }
+  return values;
+}
+
+function dataView(payload: Uint8Array): DataView {
+  return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+}
+
+function decodeDataValue(
+  entry: WpiLogEntry,
+  payload: Uint8Array,
+  offset: number,
+): WpiLogDataValue | undefined {
+  switch (entry.type) {
+    case "boolean":
+      return { type: entry.type, data: payload[0] !== 0 };
+    case "int64":
+      return { type: entry.type, data: dataView(payload).getBigInt64(0, true) };
+    case "float":
+      return { type: entry.type, data: dataView(payload).getFloat32(0, true) };
+    case "double":
+      return { type: entry.type, data: dataView(payload).getFloat64(0, true) };
+    case "string":
+      return { type: entry.type, data: decodeUtf8(payload, entry, offset) };
+    case "boolean[]":
+      return { type: entry.type, data: Array.from(payload, (value) => value !== 0) };
+    case "int64[]": {
+      const view = dataView(payload);
+      const values = new BigInt64Array(payload.byteLength / 8);
+      for (let index = 0; index < values.length; index += 1) {
+        values[index] = view.getBigInt64(index * 8, true);
+      }
+      return { type: entry.type, data: values };
+    }
+    case "float[]": {
+      const view = dataView(payload);
+      const values = new Float32Array(payload.byteLength / 4);
+      for (let index = 0; index < values.length; index += 1) {
+        values[index] = view.getFloat32(index * 4, true);
+      }
+      return { type: entry.type, data: values };
+    }
+    case "double[]": {
+      const view = dataView(payload);
+      const values = new Float64Array(payload.byteLength / 8);
+      for (let index = 0; index < values.length; index += 1) {
+        values[index] = view.getFloat64(index * 8, true);
+      }
+      return { type: entry.type, data: values };
+    }
+    case "string[]":
+      return { type: entry.type, data: decodeStringArray(payload, entry, offset, true) ?? [] };
+    default:
+      return undefined;
+  }
+}
+
+class LazyWpiLogDataRecord implements WpiLogDataRecord {
+  constructor(
+    readonly entry: WpiLogEntry,
+    readonly timestampUs: number,
+    readonly payload: Uint8Array,
+    readonly offset: number,
+  ) {}
+
+  get value(): WpiLogDataValue | undefined {
+    const value = decodeDataValue(this.entry, this.payload, this.offset);
+    Object.defineProperty(this, "value", {
+      value,
+      enumerable: true,
+      writable: false,
+    });
+    return value;
+  }
 }
 
 class PayloadCursor {
@@ -347,6 +507,14 @@ class WpiLogStreamDecoder {
         ),
       );
     }
+    if (entry.type === "string[]" && payloadLength < 4) {
+      throw corruptDataRecord(
+        entry,
+        offset,
+        `${entry.type} entry ${entry.name} payload is too short to contain an array length`,
+        { payloadLength },
+      );
+    }
     return entry;
   }
 
@@ -368,6 +536,8 @@ class WpiLogStreamDecoder {
       );
     }
 
+    if (entry.type === "string[]") decodeStringArray(payload, entry, offset, false);
+
     this.dataRecordCount += 1;
     entry.recordCount += 1;
     entry.firstTimestampUs =
@@ -378,7 +548,9 @@ class WpiLogStreamDecoder {
       entry.lastTimestampUs === undefined
         ? header.timestampUs
         : Math.max(entry.lastTimestampUs, header.timestampUs);
-    this.handlers.onData?.({ entry, timestampUs: header.timestampUs, payload, offset });
+    if (this.handlers.onData) {
+      this.handlers.onData(new LazyWpiLogDataRecord(entry, header.timestampUs, payload, offset));
+    }
   }
 
   private handleControlRecord(payload: Uint8Array, timestampUs: number, offset: number): void {

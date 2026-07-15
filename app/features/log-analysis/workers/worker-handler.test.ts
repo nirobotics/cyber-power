@@ -8,7 +8,9 @@ import {
 } from "../core";
 import {
   appendEnergySample,
+  appendEnergyV2FixtureSample,
   buildEnergyFixture,
+  buildEnergyV2Fixture,
 } from "../../../../tests/fixtures/wpilog-builder";
 import type { LogAnalysisWorkerResponse } from "./protocol";
 import { createLogAnalysisWorkerHandler } from "./worker-handler";
@@ -76,10 +78,32 @@ function resultBuffers(result: AnalysisResult): ArrayBuffer[] {
     ]),
   ].filter((seriesItem) => seriesItem !== undefined);
 
-  return series.flatMap((seriesItem) => [
+  const buffers = series.flatMap((seriesItem) => [
     seriesItem.timestampsUs.buffer as ArrayBuffer,
     seriesItem.values.buffer as ArrayBuffer,
   ]);
+  if (dataset.v2) {
+    buffers.push(
+      dataset.v2.robotSampleTimestampUs.timestampsUs.buffer as ArrayBuffer,
+      dataset.v2.robotSampleTimestampUs.values.buffer as ArrayBuffer,
+      dataset.v2.robotSupplyCurrentAmps.timestampsUs.buffer as ArrayBuffer,
+      dataset.v2.robotSupplyCurrentAmps.values.buffer as ArrayBuffer,
+      dataset.v2.robotBatteryVoltageVolts.timestampsUs.buffer as ArrayBuffer,
+      dataset.v2.robotBatteryVoltageVolts.values.buffer as ArrayBuffer,
+    );
+    for (const subsystem of dataset.v2.subsystems) {
+      buffers.push(
+        subsystem.sampleTimestampUs.timestampsUs.buffer as ArrayBuffer,
+        subsystem.sampleTimestampUs.values.buffer as ArrayBuffer,
+        subsystem.state.timestampsUs.buffer as ArrayBuffer,
+      );
+      buffers.push(
+        subsystem.motorSamples.timestampsUs.buffer as ArrayBuffer,
+        subsystem.motorSamples.values.buffer as ArrayBuffer,
+      );
+    }
+  }
+  return buffers;
 }
 
 function clonePostingChannel(): {
@@ -142,6 +166,37 @@ describe("log analysis worker handler", () => {
     expect(result.dataset.series.totalCurrentA.values.byteLength).toBe(0);
     if (messages[1].response.type === "result") {
       expect(messages[1].response.result.dataset.series.totalCurrentA.values.byteLength).toBe(16);
+    }
+  });
+
+  it("transfers every fixed v2 timestamp, scalar, state-time, and packed buffer once", async () => {
+    const fixture = buildEnergyV2Fixture();
+    appendEnergyV2FixtureSample(
+      fixture,
+      1_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      1,
+    );
+    appendEnergyV2FixtureSample(
+      fixture,
+      2_000_000,
+      { drive: "DRIVE", indexer: "FEED" },
+      2,
+    );
+    const result = await analyzeWpiLog(fixture.builder.build());
+    const expectedBuffers = new Set(resultBuffers(result));
+    const { messages, post } = clonePostingChannel();
+    const analyze: typeof analyzeWpiLog = async () => result;
+    const handleMessage = createLogAnalysisWorkerHandler({ analyze, post });
+
+    handleMessage({ type: "analyze", requestId: "v2-result", file: new Blob() });
+
+    await vi.waitFor(() => expect(messages).toHaveLength(1));
+    expect(messages[0].transfer).toHaveLength(expectedBuffers.size);
+    for (const buffer of expectedBuffers) expect(messages[0].transfer).toContain(buffer);
+    if (messages[0].response.type === "result") {
+      expect(messages[0].response.result.dataset.v2?.subsystems).toHaveLength(2);
+      expect(messages[0].response.result.dataset.v2?.subsystems[0].motorSamples.width).toBe(6);
     }
   });
 

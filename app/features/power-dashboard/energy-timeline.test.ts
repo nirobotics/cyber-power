@@ -2,7 +2,11 @@ import { SVGRenderer } from "echarts/renderers";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { EnergyLogDataset, NumericSeries, SubsystemNode } from "../log-analysis/core";
+import {
+  type EnergyLogDataset,
+  type NumericSeries,
+  type SubsystemNode,
+} from "../log-analysis/core";
 import {
   bindTimelinePointerInteractions,
   captureWheelForPageScroll,
@@ -230,6 +234,40 @@ describe("chart cursor interactions", () => {
       chart.dispose();
     }
   });
+
+  it("clears an active preview when the chart interactions are disposed", () => {
+    const chart = cursorChart(1);
+    const onPreview = vi.fn();
+    const localPreview = { current: null as number | null };
+    const container = {
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    } as unknown as HTMLElement;
+    const cleanup = bindTimelinePointerInteractions(
+      chart,
+      container,
+      0,
+      { current: false },
+      localPreview,
+      onPreview,
+      vi.fn(),
+    );
+
+    try {
+      syncCursor(chart, 0, 4_000_000, null);
+      expect(localPreview.current).toBe(4_000_000);
+      onPreview.mockClear();
+
+      cleanup();
+
+      expect(localPreview.current).toBeNull();
+      expect(onPreview).toHaveBeenCalledOnce();
+      expect(onPreview).toHaveBeenCalledWith(null);
+    } finally {
+      cleanup();
+      chart.dispose();
+    }
+  });
 });
 
 describe("robot timeline cards", () => {
@@ -295,6 +333,30 @@ describe("robot timeline cards", () => {
     expect(markup).toContain('aria-label="整机累计能量"');
     expect(markup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(4);
     expect(markup.match(/cursor-default \[&amp;_\*\]:!cursor-default/g)).toHaveLength(4);
+  });
+
+  it("labels V2 current, power, and energy as registered-motor scope", () => {
+    const dataset = robotDataset();
+    dataset.sourceContract = "v2";
+    const markup = renderToStaticMarkup(createElement(RobotTimeline, {
+      dataset,
+      range: { startUs: 0, endUs: 1_000_000 },
+      cursorUs: 500_000,
+      cursorPreviewActive: false,
+      focus: null,
+      onCursorPreview: () => undefined,
+      onCursorCommit: () => undefined,
+    }));
+
+    expect(markup).toContain("已注册电机合计电流");
+    expect(markup).toContain("已注册电机合计功率");
+    expect(markup).toContain("已注册电机累计能量");
+    expect(createRobotTimelineOption(dataset, "power", "dark", "power")).toMatchObject({
+      series: [expect.objectContaining({ name: "已注册电机合计功率" })],
+    });
+    expect(createRobotTimelineOption(dataset, "energy", "dark", "energy")).toMatchObject({
+      series: [expect.objectContaining({ name: "已注册电机累计能量" })],
+    });
   });
 });
 
@@ -502,7 +564,12 @@ function addTimelineAreas(dataset: EnergyLogDataset) {
 
 function optionView(option: unknown) {
   return option as {
-    dataZoom: Array<{ id?: string }>;
+    dataZoom: Array<{
+      id?: string;
+      zoomOnMouseWheel?: boolean;
+      moveOnMouseMove?: boolean;
+      moveOnMouseWheel?: boolean;
+    }>;
     series: Array<{
       id?: string;
       data?: Array<[number, number]>;

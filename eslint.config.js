@@ -4,7 +4,16 @@ import reactHooks from "eslint-plugin-react-hooks";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: [".agents", "build", ".react-router", ".vercel", "node_modules"] },
+  {
+    ignores: [
+      ".agents",
+      "build",
+      "vendordep/build",
+      ".react-router",
+      ".vercel",
+      "node_modules",
+    ],
+  },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {

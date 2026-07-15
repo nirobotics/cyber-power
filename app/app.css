@@ -102,30 +102,6 @@
     --danger: 248 113 113;
   }
 
-  :root[data-theme="light"] {
-    color-scheme: light;
-    --background: #f7f7fa;
-    --foreground: #17151f;
-    --muted: #6b6875;
-    --border: #dedbe7;
-    --panel: #ffffff;
-    --accent: #5b35d5;
-    --accent-foreground: #ffffff;
-
-    --bg: 247 247 250;
-    --surface: 255 255 255;
-    --surface-2: 247 247 250;
-    --line: 222 219 231;
-    --ink: 23 21 31;
-    --ink-dim: 107 104 117;
-    --ink-faint: 151 145 164;
-    --brand: 91 53 213;
-    --brand-fg: 255 255 255;
-    --ok: 20 122 61;
-    --warn: 184 92 0;
-    --danger: 220 38 38;
-  }
-
   html,
   body {
     min-height: 100%;

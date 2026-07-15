@@ -1,4 +1,5 @@
 import { analyzeEnergyRange } from "./energy-analysis";
+import { rangeIntersections, upperBound } from "./time-series";
 import type {
   EnergyLogDataset,
   NumericSeries,
@@ -11,7 +12,6 @@ import type {
   SupplyLimitValidationIssue,
   SupplyLimitWarning,
   SupplyLimitWarningCode,
-  TimeInterval,
   TimeRange,
 } from "./types";
 
@@ -72,17 +72,6 @@ export class SupplyLimitValidationError extends Error {
     this.name = "SupplyLimitValidationError";
     this.issues = issues;
   }
-}
-
-function upperBound(values: Float64Array, target: number): number {
-  let low = 0;
-  let high = values.length;
-  while (low < high) {
-    const middle = (low + high) >>> 1;
-    if (values[middle] <= target) low = middle + 1;
-    else high = middle;
-  }
-  return low;
 }
 
 function heldNumeric(series: NumericSeries, timestampUs: number, fallback = 0): number {
@@ -300,17 +289,6 @@ function scaledEnergyInRange(
   const cursor = createEnergyCursor(energyWh, range.startUs, currentA, limitA);
   advanceEnergyCursor(cursor, range.endUs);
   return cursor;
-}
-
-function rangeIntersections(intervals: TimeInterval[], range: TimeRange): TimeInterval[] {
-  const result: TimeInterval[] = [];
-  for (const interval of intervals) {
-    const startUs = Math.max(interval.startUs, range.startUs);
-    const endUs = Math.min(interval.endUs, range.endUs);
-    if (endUs <= startUs) continue;
-    result.push({ startUs, endUs, durationSeconds: (endUs - startUs) / 1_000_000 });
-  }
-  return result;
 }
 
 function heapPush(heap: TimestampCursor[], cursor: TimestampCursor): void {

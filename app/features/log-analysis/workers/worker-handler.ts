@@ -40,6 +40,16 @@ function collectTransferables(result: AnalysisResult): Transferable[] {
     addSeries(subsystem.powerW);
     addSeries(subsystem.energyWh);
   }
+  if (dataset.v2) {
+    addSeries(dataset.v2.robotSampleTimestampUs);
+    addSeries(dataset.v2.robotSupplyCurrentAmps);
+    addSeries(dataset.v2.robotBatteryVoltageVolts);
+    for (const subsystem of dataset.v2.subsystems) {
+      addSeries(subsystem.sampleTimestampUs);
+      buffers.add(subsystem.state.timestampsUs.buffer as ArrayBuffer);
+      addSeries(subsystem.motorSamples);
+    }
+  }
   return [...buffers];
 }
 

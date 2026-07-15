@@ -99,6 +99,14 @@ export class WpiLogFixtureBuilder {
     return this;
   }
 
+  doubleArray(entryId: number, timestampUs: number, values: readonly number[]): this {
+    const payload = new Uint8Array(values.length * 8);
+    const view = new DataView(payload.buffer);
+    values.forEach((value, index) => view.setFloat64(index * 8, value, true));
+    this.records.push(encodeRecord(entryId, timestampUs, payload));
+    return this;
+  }
+
   int64(entryId: number, timestampUs: number, value: number | bigint): this {
     const payload = new Uint8Array(8);
     new DataView(payload.buffer).setBigInt64(0, BigInt(value), true);
@@ -106,8 +114,41 @@ export class WpiLogFixtureBuilder {
     return this;
   }
 
+  int64Array(
+    entryId: number,
+    timestampUs: number,
+    values: readonly (number | bigint)[],
+  ): this {
+    const payload = new Uint8Array(values.length * 8);
+    const view = new DataView(payload.buffer);
+    values.forEach((value, index) => view.setBigInt64(index * 8, BigInt(value), true));
+    this.records.push(encodeRecord(entryId, timestampUs, payload));
+    return this;
+  }
+
   boolean(entryId: number, timestampUs: number, value: boolean): this {
     this.records.push(encodeRecord(entryId, timestampUs, Uint8Array.of(value ? 1 : 0)));
+    return this;
+  }
+
+  booleanArray(entryId: number, timestampUs: number, values: readonly boolean[]): this {
+    this.records.push(
+      encodeRecord(entryId, timestampUs, Uint8Array.from(values, (value) => value ? 1 : 0)),
+    );
+    return this;
+  }
+
+  string(entryId: number, timestampUs: number, value: string): this {
+    this.records.push(encodeRecord(entryId, timestampUs, encoder.encode(value)));
+    return this;
+  }
+
+  stringArray(entryId: number, timestampUs: number, values: readonly string[]): this {
+    const payload = concat([
+      unsignedLe(values.length, 4),
+      ...values.map((value) => lengthPrefixed(value)),
+    ]);
+    this.records.push(encodeRecord(entryId, timestampUs, payload));
     return this;
   }
 
@@ -189,4 +230,120 @@ export function appendEnergySample(
     .double(entries.current, timestampUs, values.current)
     .double(entries.power, timestampUs, values.power)
     .double(entries.energy, timestampUs, values.energy);
+}
+
+export interface EnergyV2Fixture {
+  builder: WpiLogFixtureBuilder;
+  root: string;
+  contractVersion: "2.1" | "2.2" | "2.3";
+  manifest: {
+    subsystems: Array<{
+      name: string;
+      motors: Array<{
+        name: string;
+        type: "NEO";
+        analysisReduction: number;
+        leader: string | null;
+      }>;
+    }>;
+  };
+  entries: Record<string, number>;
+}
+
+/** A valid fixed-contract V2 fixture with no v1 dynamic energy tree. */
+export function buildEnergyV2Fixture(
+  root = "/Team9999/RealOutputs/energyLogger",
+  contractVersion: "2.1" | "2.2" | "2.3" = "2.2",
+): EnergyV2Fixture {
+  const builder = new WpiLogFixtureBuilder();
+  const manifest: EnergyV2Fixture["manifest"] = {
+    subsystems: [
+      {
+        name: "drive",
+        motors: [
+          {
+            name: "frontLeft",
+            type: "NEO",
+            analysisReduction: 6.75,
+            leader: null,
+          },
+          {
+            name: "frontRight",
+            type: "NEO",
+            analysisReduction: 6.75,
+            leader: "frontLeft",
+          },
+        ],
+      },
+      {
+        name: "indexer",
+        motors: [
+          {
+            name: "belt",
+            type: "NEO",
+            analysisReduction: 1,
+            leader: null,
+          },
+        ],
+      },
+    ],
+  };
+
+  const entries: Record<string, number> = {};
+  const start = (key: string, relative: string, type: string) => {
+    entries[key] = builder.start(`${root}/${relative}`, type);
+  };
+  start("contractVersion", "contractVersion", "string");
+  start("libraryVersion", "libraryVersion", "string");
+  start("manifest", "manifest", "string");
+  start("robotTimestamp", "robot/sampleTimestampUs", "int64");
+  start("robotCurrent", "robot/supplyCurrentAmps", "double");
+  start("robotVoltage", "robot/batteryVoltageVolts", "double");
+  for (const id of ["s0", "s1"]) {
+    start(`${id}.sampleTimestampUs`, `subsystems/${id}/sampleTimestampUs`, "int64");
+    start(`${id}.state`, `subsystems/${id}/state`, "string");
+    start(`${id}.samples`, `subsystems/${id}/motors/samples`, "double[]");
+  }
+  builder
+    .string(entries.contractVersion, 100_000, contractVersion)
+    .string(entries.libraryVersion, 100_000, "2026.0.0-test")
+    .string(entries.manifest, 100_000, JSON.stringify(manifest));
+  return { builder, root, contractVersion, manifest, entries };
+}
+
+export function appendEnergyV2FixtureSample(
+  fixture: EnergyV2Fixture,
+  timestampUs: number,
+  state: { drive: string; indexer: string },
+  energyWh: number,
+  options: {
+    driveStatorCurrentA?: number;
+    indexerStatorCurrentA?: number;
+  } = {},
+): void {
+  const { builder, entries } = fixture;
+  const driveRotorVelocity = fixture.contractVersion === "2.1" ? 10 : 10 * Math.PI * 2;
+  const indexerRotorVelocity = fixture.contractVersion === "2.1" ? 5 : 5 * Math.PI * 2;
+  builder
+    .int64(entries.robotTimestamp, timestampUs, timestampUs)
+    .double(entries.robotCurrent, timestampUs, 25)
+    .double(entries.robotVoltage, timestampUs, 12)
+    .int64(entries["s0.sampleTimestampUs"], timestampUs, timestampUs)
+    .string(entries["s0.state"], timestampUs, state.drive)
+    .doubleArray(entries["s0.samples"], timestampUs, [
+      12,
+      options.driveStatorCurrentA ?? 20,
+      driveRotorVelocity,
+      8,
+      Number.NaN,
+      Number.NaN,
+    ])
+    .int64(entries["s1.sampleTimestampUs"], timestampUs, timestampUs)
+    .string(entries["s1.state"], timestampUs, state.indexer)
+    .doubleArray(entries["s1.samples"], timestampUs, [
+      5,
+      options.indexerStatorCurrentA ?? 8,
+      indexerRotorVelocity,
+    ]);
+  void energyWh;
 }

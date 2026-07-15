@@ -1,3 +1,4 @@
+- Phoenix 6 的 Stator Current 是有符号工况量：正值表示 motoring、负值表示 regenerative braking（再生制动工况），且与旋转方向无关；负 Stator 本身不证明电池净回充，设备返回直流母线的功率应看带符号的 Supply Voltage 与 Supply Current，整机净回充还需看电池端总功率。Supply Current 必须保留电池侧符号。V2.2 已发布为 Stator 幅值语义，不能原地移除 `abs`；V2.3 通过新契约保留 Stator 符号，网页必须继续按版本解释。
 - “有效持续时间”必须用 `dataset.series.enabled` 是否存在区分“全程 Disabled”和“日志缺少 Enabled”：前者为 0，后者回退完整选区时长，不能仅依据 `enabledDurationSeconds === 0` 判断。
 - 底部 Brownout 事件标记应取每个 true interval 的 `startUs`，按完整能量日志 `min/max` 定位，并使用固定像素尺寸、`pointer-events: none` 的独立图层；不能把叉号几何放进 `preserveAspectRatio="none"` 的整轴 SVG，否则窄屏会把红叉压成竖线。
 - 多曲线 ECharts 的 Robot Mode/Brownout `markArea` 只能由一条可见曲线承载，避免透明背景按曲线数量重复叠色；全部曲线隐藏时使用 silent、tooltip-off 的空 carrier 保留状态背景。
@@ -25,3 +26,19 @@
 - React Router 的 `typegen`、typecheck、test 与 build 都会读写 `.react-router`；同一工作区不能并发运行这些命令，否则会出现临时文件 ENOENT。bundle 报告可以在 build 完成后单独运行。
 - Vite PWA 会把 manifest 图标自动加入 Workbox 预缓存；若通用 glob 也匹配图标，必须用 `globIgnores` 排除，否则离线缓存会出现重复 URL 和无效体积。
 - WPILOG Blob/File decoder 应在大外部 chunk 内继续使用较小窗口，并只保留跨窗口残片，避免每条记录在 4 MiB 缓冲区上反复分配；常规微秒时间戳用安全整数 `number`，仅越过 `MAX_SAFE_INTEGER` 时回退 BigInt。纯 TypeScript 基准已经达到性能目标时，不应为 WASM 增加复制边界、构建链和兼容性成本。
+- 现有 EnergyLogger v1 对节点传入的 Supply Current 取绝对值后求和，用全局电池电压估算功率并按固定循环周期积分；叶节点还可能是多电机组或同一物理组的工作模式分支。因此逐电机效率、热和机械诊断不能假设“叶节点等于一台电机”，必须用稳定设备 manifest 显式关联节点、物理电机、普通 AdvantageKit 遥测路径、符号和真实采样时间。
+- 原生转子速度本身只能支持工作转速分布和低置信度速比方向判断。工程可用的减速比推荐最少需要逐电机 `rotorVelocity`、实际 motor voltage、Supply Current、Stator/torque current、电机模型、当前减速比与独立机构输出；预测动作时间、温升或 Brownout 还需要动作标签、机构参数、控制约束与标定模型。
+- Phoenix 6 26.1.3 的 `getVelocity/getPosition` 会受反馈源及 `RotorToSensorRatio/SensorToMechanismRatio` 影响，且机器人代码还可能再换算成米等机构单位；`getRotorVelocity` 才是不受这些反馈配置影响的原生转子速度。Cyber Power 的推荐减速比表示被比较或调整的实际传动级，不能用 TalonFX 为反馈单位换算配置的总比例反推；`getRotorPosition` 仍会受 `setPosition` 与 rotor offset 影响，必须按零点相对位置处理并检测 reset，该版本没有 `getRotorAcceleration`，加速度应按真实日志时间戳派生。
+- Cyber Power 的 WPILOG 输入允许一次性 `AsyncIterable`，电机扩展必须能在所选 EnergyLogger root 下单遍自描述解析；不能让 manifest 只引用任意普通 AdvantageKit 路径后再依赖第二遍读取。逐电机大数据应使用固定 manifest 顺序和 packed typed arrays，避免每个通道复制时间戳或产生数百万 JS 对象。
+- AdvantageKit 会省略未变化字段，V2 解析器不能要求每个 motor sample record 同时出现 timestamp；应按 record time 对字段做 sample-and-hold，并用生产者写入的 `sampleTimestampUs` 对齐一组 packed samples，避免把日志框架去重误判为缺样。
+- 电机效率和减速比推荐必须共享物理可行性门禁：除机械功率不能明显超过电池输入外，还必须校验“估算机械功率 + 铜耗”不超过电池输入的容差；不可能样本要计入覆盖率并从效率与推荐窗口中同时排除，不能靠裁剪到 100% 掩盖坏数据。
+- 电机有效覆盖率必须与效率使用同一分类器，并按相邻事件的真实 `dt` 计算；时间轴需要合并异步 Battery Voltage 事件、subsystem 样本和选区精确端点，否则电压变化后的区间会沿用错误门禁。覆盖曲线应保存压缩状态段与各无效原因时长，不能只保存一个百分比。
+- 减速比推荐不能为了性能固定抽取最多 4096 个样本；应让全部合格区间以真实 `dt` 进入候选评分，铜耗下降以当前历史工况的实际铜耗为基线，并在界面逐组展示有效区间数、有效时长、覆盖状态数、估算改善和限制。
+- 当前减速比推荐优化的是历史工况下的估算绕组铜耗与启发式电压余量惩罚，不会重算候选 Supply Current、电池压降或整机 Wh；“估算铜耗下降”不得表述成同百分比的电池能耗下降。模型保持机构侧扭矩、速度和动作时长不变，忽略铁耗、控制器与传动损耗、反射惯量和瞬态，因此结果可能偏向更大减速比，必须保留电压、空载转速和堵转电流门禁及限制说明。
+- 更换减速比后的节能结论必须以相同机械任务和同等性能下的实机 A/B 为准，比较每次成功动作的电池侧或子系统 Supply 侧 Wh，并同时约束完成时间、跟踪误差、峰值电流、最低电压、Brownout 和温升；瞬时效率更高或估算铜耗更低不能单独证明总能耗下降，验证结论只覆盖测试过的负载、电池和温度范围。
+- 已发布 packed 槽位的单位语义不能原地修改：V2.1 第三槽永久为 `rps`，改成 `rad/s` 必须发布新契约 V2.2 和新不可变制品。网页只能按 `contractVersion` 在 parser 边界把 V2.1 乘 `2π`、V2.2 原值保留，随后机械功率、反电动势、自由转速和减速比模型全部只处理 `rad/s`；禁止按数值大小或 library version 猜单位。
+- CTRE Motor Testing Lab 的 `*_raw.csv` 实际是 12 V 台架多次试验经线性回归外推后的完整性能曲线，不是带逐次方差的原始采样；它适合提供 `R_eff/Kv/Kt/I0` 和曲线内效率基准，但不能辨识真实机构 `kS` 或现实不确定度。Kraken X44/X60 四种换相配置的主尺度常数与现有模型只差约 0–2.3%，主要误差是现有统一 `freeCurrentA=2` 低于曲线的 `2.83–3.50 A`，且 `Kt·I·ω` 未扣空载损耗电流；机械功率和减速比反事实都必须分开处理负载电流与随速度变化的损耗电流。
+- 电池压降分析必须先确认整机 PDH/PDP Total Current：`SystemStats/BatteryCurrent` 是 roboRIO 输入电流，EnergyLogger `robot/supplyCurrentAmps` 是已注册电机 Supply Current 总和；缺少有效 PDH 总电流时只能报告“基于已注册电机负载的机器人侧等效压降系数”，不能称为电池内阻。单场日志应使用局部稳健回归和独立负载阶跃并展示时变范围与残差，不应用全日志单一 `Voc/R`；准确电池模型还需 Battery ID、温度、充电/静置状态和同步 PDH 总电流。
+- V2.3 的通用设备适配器必须先归一化电流方向：Supply Current 从直流母线取电为正、向母线返回为负，Stator Current 驱动为正、再生制动为负，二者都不得因为转子反转而翻转；否则正向 Wh/Ah、回流区间、效率和电池代理都会被系统性误判。
+- Kraken X44/X60 的当前模型用 CTRE 12 V 曲线端点分别拟合 `R/Kt/Kv/I0`，机械功率使用 `Iload=max(Istator-I0,0)`，铜耗使用 `n×Istator²×R`。减速比候选必须包含当前比作为精确恒等点；候选评分中的 25 W 电压余量权重只是启发式偏好，不是额外能耗，因此推荐后铜耗可能高于当前值，界面要按带符号“减少/增加”显示，不能伪装成必然节能。
+- `akit_26-07-15_07-29-59.wpilog` 默认比赛区间的电池代理实测基线为：正向已注册电机输入 `75.3656 Wh`、拒绝 17 个跨空洞候选后阶跃代理中位数 `16.371 mΩ`、局部窗口代理中位数 `17.003 mΩ`，两种独立方法量级一致；该值仍混合电池、线束、连接器、动态恢复和未记录负载，只能作为单场局部代理。解析 72.20 MiB / 2,901,736 records 的三次本地基准为均值 `571.291 ms`、P95 `584.809 ms`、峰值 RSS `231.68 MiB`；已解析数据上电池代理五次均值 `69.633 ms`、P95 `72.319 ms`。

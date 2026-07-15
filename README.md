@@ -12,16 +12,21 @@ Cyber Power 是面向任何正确使用 NI EnergyLogger 的 FRC 机器人 WPILOG
 
 兼容性只取决于 WPILOG 1.0 与 NI EnergyLogger 数据契约，不限制队伍、赛季、ProjectName 或子系统命名。
 
+EnergyLogger v2.3 是当前独立的机器人端写入契约，不需要同时写 v1。网页同时读取历史 v2.1（原生转速为 RPS、Stator Current 为幅值）、v2.2（原生转速为 `rad/s`、Stator Current 为幅值）与 v2.3（原生转速为 `rad/s`、Supply/Stator Current 使用与转子方向无关的母线取电/驱动符号），并在解析边界统一转速单位。网页用 Battery Voltage 与已注册物理电机 Supply Current 重建基础能量图；子系统状态并入唯一的“功耗明细”；“电机”页按 Manifest 的 Leader/Follower 关系提供估算驱动效率、有效覆盖率、CTRE 曲线校正后的减速比建议和同区间铜耗对比；“电池”页提供已注册电机负载下的实测电压表现、局部等效压降代理和负载阶跃统计。历史 v1 日志继续使用整机、子系统、模拟和数据质量功能。
+
 独立的“模拟”页按子系统明细相同的可展开 EnergyLogger 层级表展示路径，并在每行右侧直接填写合计 Supply Current 上限、独立启用一个或多个互不重叠节点；总开关开启后基于当前共享时间范围实时生成耗电量与峰值变化报告。模拟不会修改整机或子系统原图表，也不控制机器人，不预测 Stator Current、电池电压、Brownout 或机构动作结果。
 
 ## 目录
 
 - `app/`：React Router 应用、认证和分析界面。
+- `vendordep/`：包路径为 `com.nextinnovation.cyberpower` 的 Java 17/WPILib 机器人端记录库。
+- `public/vendordep/`：生产 vendordep JSON 与静态 Maven 发布目录。
 - `.agents/skills/`：项目级 Cyber Apps、GitHub、Memory 和日志分析 skills。
 - `.memory/`：项目长期约束与当前状态；`SCRUM.md` 仅保留本地。
 - `supabase/`：仅飞书登录用户资料所需的数据库 migration。
 - `docs/architecture.md`：解析、认证、离线和存储边界。
 - `docs/validation.md`：真实日志金标与验收方法。
+- `.agents/skills/cyber-power-log-analysis/references/energylogger-contract.md`：EnergyLogger v1/v2 数据契约。
 
 ## 给人看的工具
 
@@ -38,6 +43,8 @@ pnpm dev
 ```
 
 浏览器打开开发服务器地址，登录飞书后选择 `.wpilog` 文件。日志和分析结果默认只存在于本机。
+
+若日志包含完整有效的 EnergyLogger v2.1、v2.2 或 v2.3，“子系统”页的“功耗明细”可展开查看各状态指标；“电机”页按 Leader 电机展示整组 Follower、估算驱动效率、有效覆盖率、当前/推荐减速比、同一有效工况下的铜耗 Wh 和推荐依据；“电池”页展示电压、已注册电机正向输入、局部窗口拟合、负载阶跃和 Robot Mode 条件统计。数据不足时对应结果明确显示“不可用”，不会从 Follower 或 v1 聚合节点猜测数据，也不会把局部压降代理表述成电池真实内阻、SOC、容量或整机总 Wh。
 
 必须配置 `.env.local` 中的 8 个服务端变量；含 secret 的值不能使用 `VITE_` 前缀。完整说明见 [架构文档](docs/architecture.md)。
 
@@ -57,6 +64,7 @@ pnpm lint
 pnpm test
 pnpm build
 pnpm bundle:check
+pnpm vendordep:contract
 ```
 
 ```powershell
@@ -66,7 +74,7 @@ pnpm log:analyze -- "C:\path\robot.wpilog" --start 120 --end 135 --json
 pnpm log:benchmark -- --warmup 1 --runs 5 "C:\path\robot.wpilog"
 ```
 
-`log:list` 只检查容器并列出 entries；`log:analyze` 会校验 EnergyLogger 契约并计算指标；`log:benchmark` 记录解析、区间分析、可选限流模拟与进程内存。`bundle:report` 查看构建组成，`bundle:check` 执行不依赖私有日志的体积门禁。真实样例与性能基线见 [验证文档](docs/validation.md)。
+`log:list` 只检查容器并列出 entries；`log:analyze` 会校验 EnergyLogger 契约并计算指标；`log:benchmark` 记录解析、区间分析、可选限流模拟与进程内存。`vendordep:contract` 直接解析 Java vendordep 生成的 V2.3 WPILOG，执行跨语言契约验证。`bundle:report` 查看构建组成，`bundle:check` 执行不依赖私有日志的体积门禁。真实样例与性能基线见 [验证文档](docs/validation.md)。
 
 ## 维护规则
 

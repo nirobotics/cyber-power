@@ -1,4 +1,12 @@
-import { lazy, Suspense, useCallback, useEffect, useRef, useState, type RefObject } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type RefObject,
+} from "react";
 import type { AnalysisResult } from "../log-analysis/core";
 import type { LogAnalysisWorkerResponse } from "../log-analysis/workers/protocol";
 import { FileDropZone } from "./file-drop-zone";
@@ -25,11 +33,17 @@ export function AnalysisWorkspace({
 }) {
   const workerRef = useRef<Worker | null>(null);
   const requestRef = useRef<string | null>(null);
+  const [clientMounted, setClientMounted] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState({ ratio: 0, message: "正在准备解析器…" });
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setClientMounted(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
 
   useEffect(() => () => workerRef.current?.terminate(), []);
 
@@ -125,7 +139,15 @@ export function AnalysisWorkspace({
       </Suspense>
     );
   }
-  return <FileDropZone busy={busy} progress={progress} error={error} onFile={analyze} />;
+  return (
+    <FileDropZone
+      ready={clientMounted}
+      busy={busy}
+      progress={progress}
+      error={error}
+      onFile={analyze}
+    />
+  );
 }
 
 function releaseWorker(

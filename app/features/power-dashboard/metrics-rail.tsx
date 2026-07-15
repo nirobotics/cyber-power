@@ -4,10 +4,12 @@ import { formatDuration, formatNumber } from "./format";
 
 export function MetricsRail({
   analysis,
+  sourceContract,
   onLocatePeakPower,
   onLocatePeakCurrent,
 }: {
   analysis: RangeAnalysis;
+  sourceContract?: "v1" | "v2";
   onLocatePeakPower: () => void;
   onLocatePeakCurrent: () => void;
 }) {
@@ -20,10 +22,26 @@ export function MetricsRail({
     hint?: string;
   }> = [
     { label: "有效持续时间", value: formatDuration(totals.effectiveDurationSeconds) },
-    { label: "总能量", value: `${formatNumber(totals.energyWh, 3)} Wh` },
-    { label: "平均功率", value: `${formatNumber(totals.averagePowerW, 1)} W` },
-    { label: "峰值功率", value: `${formatNumber(totals.peakPowerW, 1)} W`, onClick: onLocatePeakPower, hint: "定位峰值功率时间" },
-    { label: "峰值电流", value: `${formatNumber(totals.peakCurrentA, 1)} A`, onClick: onLocatePeakCurrent, hint: "定位峰值电流时间" },
+    {
+      label: sourceContract === "v2" ? "已注册电机能量" : "总能量",
+      value: `${formatNumber(totals.energyWh, 3)} Wh`,
+    },
+    {
+      label: sourceContract === "v2" ? "已注册电机平均功率" : "平均功率",
+      value: `${formatNumber(totals.averagePowerW, 1)} W`,
+    },
+    {
+      label: sourceContract === "v2" ? "已注册电机峰值功率" : "峰值功率",
+      value: `${formatNumber(totals.peakPowerW, 1)} W`,
+      onClick: onLocatePeakPower,
+      hint: sourceContract === "v2" ? "定位已注册电机峰值功率时间" : "定位峰值功率时间",
+    },
+    {
+      label: sourceContract === "v2" ? "已注册电机合计电流峰值" : "峰值电流",
+      value: `${formatNumber(totals.peakCurrentA, 1)} A`,
+      onClick: onLocatePeakCurrent,
+      hint: sourceContract === "v2" ? "定位已注册电机合计电流峰值时间" : "定位峰值电流时间",
+    },
     {
       label: "最低电压",
       value: totals.minVoltageV === undefined ? "无可用数据" : `${formatNumber(totals.minVoltageV, 2)} V`,

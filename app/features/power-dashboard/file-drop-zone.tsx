@@ -2,11 +2,13 @@ import { FileUp, TriangleAlert } from "lucide-react";
 import { useRef, useState, type DragEvent } from "react";
 
 export function FileDropZone({
+  ready,
   busy = false,
   progress,
   error,
   onFile,
 }: {
+  ready: boolean;
   busy?: boolean;
   progress?: { ratio: number; message: string };
   error?: string | null;
@@ -14,9 +16,10 @@ export function FileDropZone({
 }) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
+  const interactive = ready && !busy;
 
   const accept = (file?: File) => {
-    if (!file || busy) return;
+    if (!file || !interactive) return;
     onFile(file);
   };
 
@@ -31,44 +34,65 @@ export function FileDropZone({
       <div className="w-full max-w-3xl">
         <div
           role="button"
-          tabIndex={0}
+          tabIndex={interactive ? 0 : -1}
           aria-busy={busy}
+          aria-disabled={!interactive}
           aria-label="选择 WPILOG 文件"
-          onClick={() => !busy && inputRef.current?.click()}
+          onClick={() => interactive && inputRef.current?.click()}
           onKeyDown={(event) => {
-            if (!busy && (event.key === "Enter" || event.key === " ")) inputRef.current?.click();
+            if (interactive && (event.key === "Enter" || event.key === " ")) {
+              inputRef.current?.click();
+            }
           }}
           onDragEnter={(event) => {
             event.preventDefault();
-            if (!busy) setDragging(true);
+            if (interactive) setDragging(true);
           }}
           onDragOver={(event) => event.preventDefault()}
           onDragLeave={() => setDragging(false)}
           onDrop={handleDrop}
           className={[
             "card grid min-h-72 place-items-center border-dashed p-8 text-center outline-none transition",
-            busy ? "cursor-wait" : "cursor-pointer hover:border-brand focus-visible:ring-2 focus-visible:ring-brand/40",
+            interactive
+              ? "cursor-pointer hover:border-brand focus-visible:ring-2 focus-visible:ring-brand/40"
+              : busy
+                ? "cursor-wait"
+                : "cursor-default",
             dragging ? "border-brand bg-brand/5" : "",
           ].join(" ")}
         >
-          <input
-            ref={inputRef}
-            className="sr-only"
-            type="file"
-            accept=".wpilog,application/octet-stream"
-            disabled={busy}
-            onChange={(event) => accept(event.currentTarget.files?.item(0) ?? undefined)}
-          />
+          {ready ? (
+            <input
+              ref={inputRef}
+              className="sr-only"
+              type="file"
+              accept=".wpilog,application/octet-stream"
+              disabled={busy}
+              onChange={(event) => {
+                const selected = event.currentTarget.files?.item(0) ?? undefined;
+                event.currentTarget.value = "";
+                accept(selected);
+              }}
+            />
+          ) : null}
           <div className="grid w-full max-w-md gap-4">
             <span className="mx-auto grid size-14 place-items-center rounded-md border border-line bg-surface-2 text-brand">
               <FileUp className="size-6" aria-hidden />
             </span>
             <div aria-live="polite">
               <p className="text-base font-semibold text-ink">
-                {busy ? progress?.message ?? "正在读取 WPILOG…" : "将 .wpilog 文件拖到此处"}
+                {!ready
+                  ? "正在准备本地分析…"
+                  : busy
+                    ? progress?.message ?? "正在读取 WPILOG…"
+                    : "将 .wpilog 文件拖到此处"}
               </p>
               <p className="mt-1 text-sm text-ink-dim">
-                {busy ? `${formatNumberSafe((progress?.ratio ?? 0) * 100)}%` : "或点击选择文件"}
+                {!ready
+                  ? " "
+                  : busy
+                    ? `${formatNumberSafe((progress?.ratio ?? 0) * 100)}%`
+                    : "或点击选择文件"}
               </p>
             </div>
             {busy ? (

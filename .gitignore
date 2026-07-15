@@ -1,6 +1,9 @@
 .memory/SCRUM.md
 node_modules/
 build/
+vendordep/build/
+hs_err_pid*.log
+vendordep/.gradle/
 .react-router/
 .vercel/
 .env

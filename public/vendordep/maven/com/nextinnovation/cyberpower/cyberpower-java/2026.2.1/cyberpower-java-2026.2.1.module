@@ -1,0 +1,100 @@
+{
+  "formatVersion": "1.1",
+  "component": {
+    "group": "com.nextinnovation.cyberpower",
+    "module": "cyberpower-java",
+    "version": "2026.2.1",
+    "attributes": {
+      "org.gradle.status": "release"
+    }
+  },
+  "createdBy": {
+    "gradle": {
+      "version": "8.11"
+    }
+  },
+  "variants": [
+    {
+      "name": "apiElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-api"
+      },
+      "files": [
+        {
+          "name": "cyberpower-java-2026.2.1.jar",
+          "url": "cyberpower-java-2026.2.1.jar",
+          "size": 16899,
+          "sha512": "eeff49dd9a7a03f2fe8c57631268aa973f2060163692862e7fd1005349911563cf6d9a74990b7db6591346cda11e633ae0b0fce13e8f474ed99ed9a29a21b35e",
+          "sha256": "b1e285b44233e6f129e6bbd863f206190844fdc1524733ee7cb540461560d6a5",
+          "sha1": "71df8710ce9fa390846cce545a7e9f2cff0b74b1",
+          "md5": "bbefcac57a0c10585d7ac958e831fdbf"
+        }
+      ]
+    },
+    {
+      "name": "runtimeElements",
+      "attributes": {
+        "org.gradle.category": "library",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.jvm.version": 17,
+        "org.gradle.libraryelements": "jar",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "cyberpower-java-2026.2.1.jar",
+          "url": "cyberpower-java-2026.2.1.jar",
+          "size": 16899,
+          "sha512": "eeff49dd9a7a03f2fe8c57631268aa973f2060163692862e7fd1005349911563cf6d9a74990b7db6591346cda11e633ae0b0fce13e8f474ed99ed9a29a21b35e",
+          "sha256": "b1e285b44233e6f129e6bbd863f206190844fdc1524733ee7cb540461560d6a5",
+          "sha1": "71df8710ce9fa390846cce545a7e9f2cff0b74b1",
+          "md5": "bbefcac57a0c10585d7ac958e831fdbf"
+        }
+      ]
+    },
+    {
+      "name": "sourcesElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "sources",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "cyberpower-java-2026.2.1-sources.jar",
+          "url": "cyberpower-java-2026.2.1-sources.jar",
+          "size": 8857,
+          "sha512": "7602f7178a8a0d4f0b80d05bfa8d6f398be754513e7669946bf9c0a6c63836aa3b57e9f6560f4521ff113ad98442328a307f54524902039e730f91e9e378e3f5",
+          "sha256": "b2af04e7e3332b127c1eabed8fc39115bbffd5630da7d7747420e9b66c750ffb",
+          "sha1": "8e5982949c57a063ea3d9f751320c4903ad2383a",
+          "md5": "c0f9719b2be5b1eafc0846ac2dcee3d8"
+        }
+      ]
+    },
+    {
+      "name": "javadocElements",
+      "attributes": {
+        "org.gradle.category": "documentation",
+        "org.gradle.dependency.bundling": "external",
+        "org.gradle.docstype": "javadoc",
+        "org.gradle.usage": "java-runtime"
+      },
+      "files": [
+        {
+          "name": "cyberpower-java-2026.2.1-javadoc.jar",
+          "url": "cyberpower-java-2026.2.1-javadoc.jar",
+          "size": 89745,
+          "sha512": "b88b85f28a87274efc25de05844699fe30eed4afc0f97a937d2f4a5c8464068f75badadd439a6693666c59c73f8ad0e2e33b91d79778cd2dd73a1051e7874cbf",
+          "sha256": "71b20e1dd0a4e85e37b201c52e56715c87e6a6ccb4a7356892a680e1ac95c346",
+          "sha1": "557d0a45dbe50ac32a442e6400e6e890872a0126",
+          "md5": "2b9a233e6eba778063b40daff145abea"
+        }
+      ]
+    }
+  ]
+}
