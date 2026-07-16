@@ -1,9 +1,11 @@
+import groovy.json.JsonOutput
 import groovy.json.JsonSlurper
 import groovy.xml.XmlSlurper
 import org.gradle.util.GradleVersion
 
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
+import java.util.jar.JarFile
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -18,17 +20,73 @@ def javaVersion = JavaVersion.VERSION_17
 def artifactName = providers.gradleProperty("cyberPowerArtifactId").get()
 def requiredGradleVersion = providers.gradleProperty("cyberPowerGradleVersion").get()
 def wpilibRelease = providers.gradleProperty("wpilibVersion").get()
+def versionFile = layout.projectDirectory.file("../VERSION")
+def immutableArtifactHashesFile = layout.projectDirectory.file("immutable-artifacts.json")
 def vendordepFile = layout.projectDirectory.file("../public/vendordep/CyberPower.json")
 def vendordepMavenDirectory = layout.projectDirectory.dir("../public/vendordep/maven")
+def releaseStagingDirectory = layout.buildDirectory.dir("release-staging")
+def releaseStagingMavenDirectory = releaseStagingDirectory.map { it.dir("maven") }
+def generatedVersionResourcesDirectory = layout.buildDirectory.dir("generated/version-resources")
 def blockedV1WriterVersions = ["2026.1.0", "2026.1.1"] as Set
-def immutableArtifacts = [
-    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.0/cyberpower-java-2026.2.0.jar":
-        "542503429b25b7d3da60e738244669410ba99db75b4d15dcf45d93bb878b2cd8",
-    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.1/cyberpower-java-2026.2.1.jar":
-        "b1e285b44233e6f129e6bbd863f206190844fdc1524733ee7cb540461560d6a5",
-    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.2/cyberpower-java-2026.2.2.jar":
-        "8abddc75f41d4323db27aecf7b806a677193cb0d9d106c2bdb177f6b8d67a02a",
-]
+
+if (!versionFile.asFile.isFile()) {
+    throw new GradleException("Missing canonical product version: ${versionFile.asFile}")
+}
+def compareReleaseVersions = { String left, String right ->
+    List<Integer> leftParts = left.tokenize(".").collect { Integer.parseInt(it) }
+    List<Integer> rightParts = right.tokenize(".").collect { Integer.parseInt(it) }
+    (leftParts[0] <=> rightParts[0])
+        ?: (leftParts[1] <=> rightParts[1])
+        ?: (leftParts[2] <=> rightParts[2])
+}
+String canonicalProductVersion = versionFile.asFile.getText("UTF-8").trim()
+if (!(canonicalProductVersion ==~ /\d{4}\.\d+\.\d+/)) {
+    throw new GradleException("VERSION must use the FRC release form YYYY.MAJOR.PATCH")
+}
+String releaseCandidateVersion = providers.gradleProperty("cyberPowerReleaseVersion").orNull
+if (releaseCandidateVersion != null) {
+    releaseCandidateVersion = releaseCandidateVersion.trim()
+    if (!(releaseCandidateVersion ==~ /\d{4}\.\d+\.\d+/)) {
+        throw new GradleException(
+            "cyberPowerReleaseVersion must use the FRC release form YYYY.MAJOR.PATCH",
+        )
+    }
+    if (compareReleaseVersions(releaseCandidateVersion, canonicalProductVersion) <= 0) {
+        throw new GradleException(
+            "cyberPowerReleaseVersion ${releaseCandidateVersion} must be newer than "
+                + "canonical VERSION ${canonicalProductVersion}",
+        )
+    }
+}
+version = releaseCandidateVersion ?: canonicalProductVersion
+
+def loadImmutableArtifacts = {
+    File hashesFile = immutableArtifactHashesFile.asFile
+    if (!hashesFile.isFile()) {
+        throw new GradleException("Missing immutable artifact manifest: ${hashesFile}")
+    }
+    def manifest = new JsonSlurper().parse(hashesFile)
+    if (manifest.schemaVersion != 1 || !(manifest.artifacts instanceof Map)) {
+        throw new GradleException("Invalid immutable artifact manifest: ${hashesFile}")
+    }
+    Map<String, String> hashes = new LinkedHashMap<>()
+    manifest.artifacts.each { relativePath, sha256 ->
+        if (!(relativePath instanceof String)
+            || !(relativePath ==~ /[A-Za-z0-9._\/-]+/)
+            || relativePath.contains("//")
+            || relativePath.contains("../")
+            || !(sha256 instanceof String)
+            || !(sha256 ==~ /[0-9a-f]{64}/)) {
+            throw new GradleException("Invalid immutable artifact entry: ${relativePath}")
+        }
+        hashes.put(relativePath, sha256)
+    }
+    if (hashes.isEmpty()) {
+        throw new GradleException("Immutable artifact manifest must not be empty")
+    }
+    return hashes
+}
+def immutableArtifacts = loadImmutableArtifacts()
 def forbiddenV1ClassEntries = [
     "com/nextinnovation/cyberpower/EnergyMotor.class",
     "com/nextinnovation/cyberpower/EnergySupplyLoad.class",
@@ -87,16 +145,165 @@ def assertV2OnlyArtifact = { File artifact ->
     }
 }
 
+def digest = { File file, String algorithm ->
+    MessageDigest.getInstance(algorithm)
+        .digest(file.bytes)
+        .encodeHex()
+        .toString()
+}
+def sha256 = { File file -> digest(file, "SHA-256") }
+
+def assertArtifactVersionIdentity = { File artifact, String expectedVersion ->
+    try (JarFile archive = new JarFile(artifact)) {
+        String implementationVersion = archive.manifest
+            ?.mainAttributes
+            ?.getValue("Implementation-Version")
+        if (implementationVersion != expectedVersion) {
+            throw new GradleException(
+                "Invalid JAR Implementation-Version for ${artifact.name}: "
+                    + "expected ${expectedVersion}, received ${implementationVersion}",
+            )
+        }
+        String moduleName = archive.manifest
+            ?.mainAttributes
+            ?.getValue("Automatic-Module-Name")
+        if (moduleName != "com.nextinnovation.cyberpower") {
+            throw new GradleException(
+                "Invalid Automatic-Module-Name for ${artifact.name}: ${moduleName}",
+            )
+        }
+
+        ZipEntry versionResource = archive.getEntry("META-INF/cyber-power-version.txt")
+        if (versionResource != null) {
+            String resourceVersion = new String(
+                archive.getInputStream(versionResource).readAllBytes(),
+                StandardCharsets.UTF_8,
+            ).trim()
+            if (resourceVersion != expectedVersion) {
+                throw new GradleException(
+                    "Invalid embedded libraryVersion for ${artifact.name}: "
+                        + "expected ${expectedVersion}, received ${resourceVersion}",
+                )
+            }
+        } else {
+            // 2026.2.0-2026.2.2 predate the generated version resource. Their immutable
+            // EnergyLogger class contains the exact fallback string instead.
+            ZipEntry loggerClass = archive.getEntry(
+                "com/nextinnovation/cyberpower/EnergyLogger.class",
+            )
+            if (loggerClass == null) {
+                throw new GradleException("Missing EnergyLogger.class in ${artifact.name}")
+            }
+            String classBytes = new String(
+                archive.getInputStream(loggerClass).readAllBytes(),
+                StandardCharsets.ISO_8859_1,
+            )
+            if (!classBytes.contains(expectedVersion)) {
+                throw new GradleException(
+                    "Published ${artifact.name} cannot report libraryVersion ${expectedVersion}",
+                )
+            }
+        }
+    } catch (IOException error) {
+        throw new GradleException("Unable to inspect published artifact ${artifact}", error)
+    }
+}
+
+def checksumAlgorithms = [
+    md5: "MD5",
+    sha1: "SHA-1",
+    sha256: "SHA-256",
+    sha512: "SHA-512",
+]
+
+def assertChecksumSidecars = { File file ->
+    checksumAlgorithms.each { extension, algorithm ->
+        File sidecar = new File(file.parentFile, "${file.name}.${extension}")
+        if (!sidecar.isFile()) {
+            throw new GradleException("Missing ${algorithm} sidecar: ${sidecar}")
+        }
+        String expectedDigest = sidecar.getText("UTF-8").trim().toLowerCase(Locale.ROOT)
+        String actualDigest = digest(file, algorithm)
+        if (expectedDigest != actualDigest) {
+            throw new GradleException(
+                "Invalid ${algorithm} sidecar for ${file.name}: expected ${expectedDigest}, "
+                    + "received ${actualDigest}",
+            )
+        }
+    }
+}
+
+def assertPublishedVersionFiles = { File repositoryDirectory, String artifactVersion ->
+    File versionDirectory = new File(
+        repositoryDirectory,
+        "${project.group.toString().replace('.', '/')}/${artifactName}/${artifactVersion}",
+    )
+    List<String> primaryFileNames = [
+        "${artifactName}-${artifactVersion}.jar",
+        "${artifactName}-${artifactVersion}-sources.jar",
+        "${artifactName}-${artifactVersion}-javadoc.jar",
+        "${artifactName}-${artifactVersion}.pom",
+        "${artifactName}-${artifactVersion}.module",
+    ]
+    Set<String> expectedFileNames = new LinkedHashSet<>(primaryFileNames)
+    primaryFileNames.each { fileName ->
+        checksumAlgorithms.keySet().each { extension ->
+            expectedFileNames.add("${fileName}.${extension}")
+        }
+    }
+    Set<String> actualFileNames = (versionDirectory.listFiles()
+        ?.findAll { it.isFile() }
+        ?.collect { it.name } ?: []) as Set
+    if (actualFileNames != expectedFileNames) {
+        throw new GradleException(
+            "Maven version directory ${artifactVersion} has missing or unexpected files; "
+                + "expected ${expectedFileNames.sort()}, received ${actualFileNames.sort()}",
+        )
+    }
+    primaryFileNames.each { fileName ->
+        File publishedFile = new File(versionDirectory, fileName)
+        if (!publishedFile.isFile() || publishedFile.length() == 0) {
+            throw new GradleException("Missing or empty Maven artifact: ${publishedFile}")
+        }
+        assertChecksumSidecars(publishedFile)
+    }
+
+    File runtimeArtifact = new File(
+        versionDirectory,
+        "${artifactName}-${artifactVersion}.jar",
+    )
+    assertV2OnlyArtifact(runtimeArtifact)
+    assertArtifactVersionIdentity(runtimeArtifact, artifactVersion)
+
+    def pom = new XmlSlurper(false, false).parse(
+        new File(versionDirectory, "${artifactName}-${artifactVersion}.pom"),
+    )
+    if (pom.groupId.text() != project.group.toString()
+        || pom.artifactId.text() != artifactName
+        || pom.version.text() != artifactVersion) {
+        throw new GradleException("POM coordinate does not match ${artifactVersion}")
+    }
+
+    def module = new JsonSlurper().parse(
+        new File(versionDirectory, "${artifactName}-${artifactVersion}.module"),
+    )
+    if (module.component != [
+        group: project.group.toString(),
+        module: artifactName,
+        version: artifactVersion,
+        attributes: ["org.gradle.status": "release"],
+    ]) {
+        throw new GradleException("Gradle module coordinate does not match ${artifactVersion}")
+    }
+}
+
 def assertImmutableArtifacts = { File repositoryDirectory ->
     immutableArtifacts.each { relativePath, expectedSha256 ->
         File artifact = new File(repositoryDirectory, relativePath)
         if (!artifact.isFile()) {
             throw new GradleException("Missing immutable historical artifact: ${artifact}")
         }
-        String actualSha256 = MessageDigest.getInstance("SHA-256")
-            .digest(artifact.bytes)
-            .encodeHex()
-            .toString()
+        String actualSha256 = sha256(artifact)
         if (actualSha256 != expectedSha256) {
             throw new GradleException(
                 "Immutable historical artifact changed: ${relativePath}; "
@@ -108,35 +315,187 @@ def assertImmutableArtifacts = { File repositoryDirectory ->
 
 def validatePublishedV2Repository = { File repositoryDirectory ->
     assertImmutableArtifacts(repositoryDirectory)
+    String artifactRelativeDirectory =
+        "${project.group.toString().replace('.', '/')}/${artifactName}"
+    File artifactDirectory = new File(
+        repositoryDirectory,
+        artifactRelativeDirectory,
+    )
+    File metadataFile = new File(artifactDirectory, "maven-metadata.xml")
+    if (!metadataFile.isFile()) {
+        throw new GradleException("Missing Maven metadata: ${metadataFile}")
+    }
+    assertChecksumSidecars(metadataFile)
+    Set<String> expectedMetadataFileNames = ["maven-metadata.xml"] as Set
+    checksumAlgorithms.keySet().each { extension ->
+        expectedMetadataFileNames.add("maven-metadata.xml.${extension}")
+    }
+    Set<String> actualMetadataFileNames = (artifactDirectory.listFiles()
+        ?.findAll { it.isFile() }
+        ?.collect { it.name } ?: []) as Set
+    if (actualMetadataFileNames != expectedMetadataFileNames) {
+        throw new GradleException(
+            "Maven artifact root has missing or unexpected files; expected "
+                + "${expectedMetadataFileNames.sort()}, received ${actualMetadataFileNames.sort()}",
+        )
+    }
+
+    def metadata = new XmlSlurper(false, false).parse(metadataFile)
+    if (metadata.groupId.text() != project.group.toString()
+        || metadata.artifactId.text() != artifactName) {
+        throw new GradleException(
+            "Maven metadata coordinate must be ${project.group}:${artifactName}",
+        )
+    }
+    List<String> metadataVersionList = metadata.versioning.versions.version.collect { it.text() }
+    Set<String> metadataVersions = metadataVersionList as Set
+    if (metadataVersions.isEmpty()) {
+        throw new GradleException("Maven metadata must publish at least one V2 writer version")
+    }
+    if (metadataVersionList.size() != metadataVersions.size()
+        || !metadataVersions.every { it ==~ /\d{4}\.\d+\.\d+/ }) {
+        throw new GradleException("Maven metadata contains duplicate or malformed versions")
+    }
+    List<File> versionDirectories = artifactDirectory.listFiles()?.findAll { it.isDirectory() } ?: []
+    Set<String> versionDirectoryNames = versionDirectories.collect { it.name } as Set
+
+    Set<String> immutableVersions = new LinkedHashSet<>()
+    immutableArtifacts.keySet().each { relativePath ->
+        String prefix = "${artifactRelativeDirectory}/"
+        if (!relativePath.startsWith(prefix)) {
+            throw new GradleException(
+                "Immutable artifact is outside the Cyber Power Maven coordinate: ${relativePath}",
+            )
+        }
+        String versionAndFile = relativePath.substring(prefix.length())
+        int separatorIndex = versionAndFile.indexOf('/')
+        if (separatorIndex <= 0
+            || separatorIndex != versionAndFile.lastIndexOf('/')
+            || separatorIndex == versionAndFile.length() - 1) {
+            throw new GradleException("Invalid immutable Maven artifact path: ${relativePath}")
+        }
+        String recordedVersion = versionAndFile.substring(0, separatorIndex)
+        if (!(recordedVersion ==~ /\d{4}\.\d+\.\d+/)) {
+            throw new GradleException("Invalid immutable artifact version: ${relativePath}")
+        }
+        immutableVersions.add(recordedVersion)
+    }
+
+    rejectKnownV1Versions(
+        metadataVersions
+            + [metadata.versioning.latest.text(), metadata.versioning.release.text()]
+            + versionDirectoryNames
+            + immutableVersions,
+    )
+    if (metadataVersions != versionDirectoryNames || metadataVersions != immutableVersions) {
+        throw new GradleException(
+            "Maven metadata, version directories, and immutable manifest must contain "
+                + "the same versions; metadata=${metadataVersions.sort()}, "
+                + "directories=${versionDirectoryNames.sort()}, "
+                + "immutable=${immutableVersions.sort()}",
+        )
+    }
+
+    String highestVersion = metadataVersions.max(compareReleaseVersions)
+    if (metadata.versioning.latest.text() != highestVersion
+        || metadata.versioning.release.text() != highestVersion
+        || canonicalProductVersion != highestVersion) {
+        throw new GradleException(
+            "Maven latest, release, and canonical VERSION must all equal highest version "
+                + highestVersion,
+        )
+    }
+
+    metadataVersions.each { artifactVersion ->
+        String versionPrefix = "${artifactRelativeDirectory}/${artifactVersion}/"
+        Set<String> recordedFileNames = immutableArtifacts.keySet()
+            .findAll { it.startsWith(versionPrefix) }
+            .collect { it.substring(versionPrefix.length()) } as Set
+        File versionDirectory = new File(artifactDirectory, artifactVersion)
+        Set<String> actualFileNames = (versionDirectory.listFiles()
+            ?.findAll { it.isFile() }
+            ?.collect { it.name } ?: []) as Set
+        if (recordedFileNames != actualFileNames) {
+            throw new GradleException(
+                "Immutable manifest does not exactly cover Maven ${artifactVersion}; "
+                    + "recorded=${recordedFileNames.sort()}, actual=${actualFileNames.sort()}",
+            )
+        }
+        assertPublishedVersionFiles(repositoryDirectory, artifactVersion)
+    }
+    return metadataVersions
+}
+
+def assertVersionUnpublished = { File repositoryDirectory, String artifactVersion ->
+    String relativeVersionDirectory =
+        "${project.group.toString().replace('.', '/')}/${artifactName}/${artifactVersion}"
+    File versionDirectory = new File(repositoryDirectory, relativeVersionDirectory)
+    File metadataFile = new File(
+        repositoryDirectory,
+        "${project.group.toString().replace('.', '/')}/${artifactName}/maven-metadata.xml",
+    )
+    Set<String> metadataVersions = metadataFile.isFile()
+        ? new XmlSlurper(false, false)
+            .parse(metadataFile)
+            .versioning
+            .versions
+            .version
+            .collect { it.text() } as Set
+        : [] as Set
+    boolean recordedImmutable = immutableArtifacts.keySet().any {
+        it.startsWith("${relativeVersionDirectory}/")
+    }
+    if (versionDirectory.exists() || metadataVersions.contains(artifactVersion) || recordedImmutable) {
+        throw new GradleException(
+            "Cyber Power ${artifactVersion} is already published and immutable; "
+                + "bump VERSION before preparing another release",
+        )
+    }
+}
+
+def validateReleaseCandidateRepository = { File repositoryDirectory ->
     File artifactDirectory = new File(
         repositoryDirectory,
         "${project.group.toString().replace('.', '/')}/${artifactName}",
     )
     File metadataFile = new File(artifactDirectory, "maven-metadata.xml")
     if (!metadataFile.isFile()) {
-        throw new GradleException("Missing Maven metadata: ${metadataFile}")
+        throw new GradleException("Missing staged Maven metadata: ${metadataFile}")
+    }
+    assertChecksumSidecars(metadataFile)
+    Set<String> expectedMetadataFileNames = ["maven-metadata.xml"] as Set
+    checksumAlgorithms.keySet().each { extension ->
+        expectedMetadataFileNames.add("maven-metadata.xml.${extension}")
+    }
+    Set<String> actualMetadataFileNames = (artifactDirectory.listFiles()
+        ?.findAll { it.isFile() }
+        ?.collect { it.name } ?: []) as Set
+    if (actualMetadataFileNames != expectedMetadataFileNames) {
+        throw new GradleException("Release staging contains unexpected Maven metadata files")
     }
     def metadata = new XmlSlurper(false, false).parse(metadataFile)
-    Set<String> metadataVersions = metadata.versioning.versions.version.collect { it.text() } as Set
-    if (metadataVersions.isEmpty()) {
-        throw new GradleException("Maven metadata must publish at least one V2 writer version")
-    }
-    List<File> versionDirectories = artifactDirectory.listFiles()?.findAll { it.isDirectory() } ?: []
-    rejectKnownV1Versions(
-        metadataVersions
-            + [metadata.versioning.latest.text(), metadata.versioning.release.text()]
-            + versionDirectories*.name,
-    )
-    Set<String> artifactVersions = new LinkedHashSet<>(metadataVersions)
-    versionDirectories.findAll {
-        new File(it, "${artifactName}-${it.name}.jar").isFile()
-    }.each { artifactVersions.add(it.name) }
-    artifactVersions.each { version ->
-        assertV2OnlyArtifact(
-            new File(artifactDirectory, "${version}/${artifactName}-${version}.jar"),
+    if (metadata.groupId.text() != project.group.toString()
+        || metadata.artifactId.text() != artifactName) {
+        throw new GradleException(
+            "Staged Maven metadata coordinate must be ${project.group}:${artifactName}",
         )
     }
-    return artifactVersions
+    Set<String> stagedVersions = metadata.versioning.versions.version.collect { it.text() } as Set
+    if (stagedVersions != ([project.version.toString()] as Set)
+        || metadata.versioning.latest.text() != project.version.toString()
+        || metadata.versioning.release.text() != project.version.toString()) {
+        throw new GradleException(
+            "Release staging must contain only Cyber Power ${project.version}",
+        )
+    }
+    rejectKnownV1Versions(stagedVersions)
+    Set<String> stagedDirectories = (artifactDirectory.listFiles()
+        ?.findAll { it.isDirectory() }
+        ?.collect { it.name } ?: []) as Set
+    if (stagedDirectories != stagedVersions) {
+        throw new GradleException("Release staging directories do not match Maven metadata")
+    }
+    assertPublishedVersionFiles(repositoryDirectory, project.version.toString())
 }
 
 if (GradleVersion.current() != GradleVersion.version(requiredGradleVersion)) {
@@ -145,11 +504,38 @@ if (GradleVersion.current() != GradleVersion.version(requiredGradleVersion)) {
     )
 }
 
+def generateVersionResource = tasks.register("generateVersionResource") {
+    group = "build"
+    description = "Generates runtime libraryVersion from canonical VERSION or an isolated candidate."
+    inputs.file(versionFile)
+    inputs.property("cyberPowerVersion", project.version.toString())
+    def outputFile = generatedVersionResourcesDirectory.map {
+        it.file("META-INF/cyber-power-version.txt")
+    }
+    outputs.file(outputFile)
+
+    doLast {
+        File destination = outputFile.get().asFile
+        destination.parentFile.mkdirs()
+        destination.setText("${project.version}\n", "UTF-8")
+    }
+}
+
 java {
     sourceCompatibility = javaVersion
     targetCompatibility = javaVersion
     withSourcesJar()
     withJavadocJar()
+}
+
+sourceSets.main.resources.srcDir(generatedVersionResourcesDirectory)
+
+tasks.named("processResources") {
+    dependsOn generateVersionResource
+}
+
+tasks.named("sourcesJar") {
+    dependsOn generateVersionResource
 }
 
 dependencies {
@@ -192,6 +578,7 @@ tasks.named("jar") {
 
 test {
     useJUnitPlatform()
+    systemProperty "cyberPower.version", project.version.toString()
 }
 
 wpi.java.configureTestTasks(test)
@@ -214,8 +601,8 @@ publishing {
 
     repositories {
         maven {
-            name = "vendordep"
-            url = vendordepMavenDirectory.asFile.toURI()
+            name = "releaseStaging"
+            url = releaseStagingMavenDirectory.get().asFile.toURI()
         }
     }
 }
@@ -223,6 +610,8 @@ publishing {
 tasks.register("validateVendordepJson") {
     group = "verification"
     description = "Validates the published V2-only descriptor and Maven repository."
+    inputs.file(versionFile)
+    inputs.file(immutableArtifactHashesFile)
     inputs.file(vendordepFile)
     inputs.dir(vendordepMavenDirectory)
 
@@ -236,7 +625,7 @@ tasks.register("validateVendordepJson") {
         def expected = [
             fileName: "CyberPower.json",
             name: "Cyber Power",
-            version: project.version.toString(),
+            version: canonicalProductVersion,
             uuid: "82ed958d-ee21-437a-90e5-dfa702a2de63",
             frcYear: "2026",
             jsonUrl: "https://power.team8214.com/vendordep/CyberPower.json",
@@ -253,7 +642,7 @@ tasks.register("validateVendordepJson") {
         if (json.javaDependencies != [[
             groupId: project.group.toString(),
             artifactId: artifactName,
-            version: project.version.toString(),
+            version: canonicalProductVersion,
         ]]) {
             throw new GradleException("javaDependencies does not match the published Maven coordinate")
         }
@@ -262,9 +651,22 @@ tasks.register("validateVendordepJson") {
         }
 
         Set<String> publishedVersions = validatePublishedV2Repository(vendordepMavenDirectory.asFile)
-        if (!publishedVersions.contains(project.version.toString())) {
+        if (!publishedVersions.contains(canonicalProductVersion)) {
             throw new GradleException(
-                "Published Maven repository does not contain current V2 writer ${project.version}",
+                "Published Maven repository does not contain current V2 writer "
+                    + canonicalProductVersion,
+            )
+        }
+        File metadataFile = new File(
+            vendordepMavenDirectory.asFile,
+            "${project.group.toString().replace('.', '/')}/${artifactName}/maven-metadata.xml",
+        )
+        def metadata = new XmlSlurper(false, false).parse(metadataFile)
+        if (metadata.versioning.latest.text() != canonicalProductVersion
+            || metadata.versioning.release.text() != canonicalProductVersion) {
+            throw new GradleException(
+                "Maven latest/release must both equal canonical VERSION "
+                    + canonicalProductVersion,
             )
         }
     }
@@ -276,6 +678,8 @@ tasks.register("testVendordepReleaseGate") {
     outputs.upToDateWhen { false }
 
     doLast {
+        project.delete(temporaryDir)
+        temporaryDir.mkdirs()
         def fixtureJar = { String entryName, String content ->
             File artifact = new File(temporaryDir, "${UUID.randomUUID()}.jar")
             try (ZipOutputStream archive = new ZipOutputStream(artifact.newOutputStream())) {
@@ -325,6 +729,45 @@ tasks.register("testVendordepReleaseGate") {
                 "TotalEnergyJoule",
             ))
         }
+
+        File unpublishedRepository = new File(temporaryDir, "unpublished-repository")
+        unpublishedRepository.mkdirs()
+        assertVersionUnpublished(unpublishedRepository, "2099.1.0")
+        File existingVersion = new File(
+            unpublishedRepository,
+            "com/nextinnovation/cyberpower/${artifactName}/2099.1.0",
+        )
+        existingVersion.mkdirs()
+        expectRejection("already published and immutable") {
+            assertVersionUnpublished(unpublishedRepository, "2099.1.0")
+        }
+
+        File immutableRepositoryFixture = new File(temporaryDir, "immutable-repository")
+        copy {
+            from vendordepMavenDirectory
+            into immutableRepositoryFixture
+        }
+        validatePublishedV2Repository(immutableRepositoryFixture)
+        File unexpectedFile = new File(
+            immutableRepositoryFixture,
+            "com/nextinnovation/cyberpower/${artifactName}/2026.2.2/unexpected.txt",
+        )
+        unexpectedFile.setText("unexpected", "UTF-8")
+        expectRejection("does not exactly cover") {
+            validatePublishedV2Repository(immutableRepositoryFixture)
+        }
+        if (!unexpectedFile.delete()) {
+            throw new GradleException("Unable to reset immutable release-gate fixture")
+        }
+        File tamperedRuntime = new File(
+            immutableRepositoryFixture,
+            "com/nextinnovation/cyberpower/${artifactName}/2026.2.2/"
+                + "${artifactName}-2026.2.2.jar",
+        )
+        tamperedRuntime.append("tampered", "UTF-8")
+        expectRejection("Immutable historical artifact changed") {
+            validatePublishedV2Repository(immutableRepositoryFixture)
+        }
     }
 }
 
@@ -335,26 +778,117 @@ tasks.named("check") {
 
 tasks.register("verifyPublishedVendordep") {
     group = "verification"
-    description = "Publishes locally and verifies the Maven files consumed by GradleRIO."
-    dependsOn "publishCyberPowerPublicationToVendordepRepository"
+    description = "Read-only verification of the committed descriptor and Maven repository."
+    dependsOn tasks.named("validateVendordepJson")
 
     doLast {
-        File artifactDirectory = new File(
+        logger.lifecycle(
+            "Verified immutable Cyber Power {} at {} without publishing or modifying it.",
+            canonicalProductVersion,
             vendordepMavenDirectory.asFile,
-            "com/nextinnovation/cyberpower/${artifactName}/${project.version}",
         )
-        def requiredFiles = [
-            "${artifactName}-${project.version}.jar",
-            "${artifactName}-${project.version}-sources.jar",
-            "${artifactName}-${project.version}-javadoc.jar",
-            "${artifactName}-${project.version}.pom",
-        ]
-        requiredFiles.each { fileName ->
-            File publishedFile = new File(artifactDirectory, fileName)
-            if (!publishedFile.isFile() || publishedFile.length() == 0) {
-                throw new GradleException("Missing or empty Maven artifact: ${publishedFile}")
-            }
+    }
+}
+
+def assertVendordepVersionUnpublished = tasks.register("assertVendordepVersionUnpublished") {
+    group = "release"
+    description = "Refuses to prepare a VERSION that already exists in the public repository."
+    inputs.file(versionFile)
+    inputs.file(immutableArtifactHashesFile)
+    inputs.dir(vendordepMavenDirectory)
+    outputs.upToDateWhen { false }
+
+    doLast {
+        assertVersionUnpublished(vendordepMavenDirectory.asFile, project.version.toString())
+    }
+}
+
+def cleanVendordepReleaseStaging = tasks.register(
+    "cleanVendordepReleaseStaging",
+    Delete,
+) {
+    group = "release"
+    description = "Removes only the temporary vendordep release staging directory."
+    delete releaseStagingDirectory
+}
+
+tasks.named("publishCyberPowerPublicationToReleaseStagingRepository") {
+    dependsOn assertVendordepVersionUnpublished
+    dependsOn cleanVendordepReleaseStaging
+}
+
+tasks.register("prepareVendordepRelease") {
+    group = "release"
+    description = "Builds and validates a new VERSION in build/release-staging without touching public/."
+    dependsOn "publishCyberPowerPublicationToReleaseStagingRepository"
+    inputs.file(versionFile)
+    inputs.file(vendordepFile)
+    inputs.property("cyberPowerVersion", project.version.toString())
+    outputs.upToDateWhen { false }
+
+    doLast {
+        File sourceDescriptor = vendordepFile.asFile
+        if (!sourceDescriptor.isFile()) {
+            throw new GradleException("Missing vendordep descriptor: ${sourceDescriptor}")
         }
-        validatePublishedV2Repository(vendordepMavenDirectory.asFile)
+        def descriptor = new JsonSlurper().parse(sourceDescriptor)
+        if (descriptor.version != canonicalProductVersion
+            || descriptor.javaDependencies != [[
+                groupId: project.group.toString(),
+                artifactId: artifactName,
+                version: canonicalProductVersion,
+            ]]) {
+            throw new GradleException(
+                "Source CyberPower.json must target canonical VERSION "
+                    + canonicalProductVersion,
+            )
+        }
+        validateReleaseCandidateRepository(releaseStagingMavenDirectory.get().asFile)
+        descriptor.version = project.version.toString()
+        descriptor.javaDependencies[0].version = project.version.toString()
+        File stagedDescriptor = releaseStagingDirectory.get().file("CyberPower.json").asFile
+        stagedDescriptor.parentFile.mkdirs()
+        stagedDescriptor.setText(
+            JsonOutput.prettyPrint(JsonOutput.toJson(descriptor)) + "\n",
+            "UTF-8",
+        )
+        def stagedJson = new JsonSlurper().parse(stagedDescriptor)
+        if (stagedJson.version != project.version.toString()
+            || stagedJson.javaDependencies != [[
+                groupId: project.group.toString(),
+                artifactId: artifactName,
+                version: project.version.toString(),
+            ]]) {
+            throw new GradleException(
+                "Staged CyberPower.json does not target candidate VERSION ${project.version}",
+            )
+        }
+        logger.lifecycle(
+            "Prepared immutable Cyber Power {} candidate at {}.",
+            project.version,
+            releaseStagingDirectory.get().asFile,
+        )
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    if (releaseCandidateVersion != null) {
+        if (!graph.hasTask(":prepareVendordepRelease")) {
+            throw new GradleException(
+                "cyberPowerReleaseVersion is isolated to prepareVendordepRelease",
+            )
+        }
+        String forbiddenTask = [
+            "check",
+            "validateVendordepJson",
+            "verifyPublishedVendordep",
+        ].find { graph.hasTask(":${it}") }
+        if (forbiddenTask != null) {
+            throw new GradleException(
+                "${forbiddenTask} always validates canonical VERSION "
+                    + "${canonicalProductVersion}; do not combine it with "
+                    + "cyberPowerReleaseVersion",
+            )
+        }
     }
 }

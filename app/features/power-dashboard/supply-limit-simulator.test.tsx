@@ -82,7 +82,7 @@ describe("SupplyLimitSimulator", () => {
     const markup = renderSimulator();
     expect(markup).toContain('aria-label="限流模拟配置"');
     expect(markup).not.toContain('id="supply-limit-editor-title"');
-    expect(markup).not.toContain(">明细</h2>");
+    expect(markup).toContain(">明细</h2>");
     expect(markup).toContain('aria-label="限流模拟电机组表"');
     expect(markup).toContain('aria-label="清空限流模拟"');
     expect(markup).toContain("drive/frontLeft");

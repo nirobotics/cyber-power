@@ -5,11 +5,13 @@ on:
     paths:
       - "vendordep/**"
       - "public/vendordep/**"
+      - "VERSION"
       - ".github/workflows/vendordep.yml"
   pull_request:
     paths:
       - "vendordep/**"
       - "public/vendordep/**"
+      - "VERSION"
       - ".github/workflows/vendordep.yml"
   workflow_dispatch:
 
@@ -40,5 +42,5 @@ jobs:
       - name: Build, test, and validate descriptor
         run: ./vendordep/gradlew -p vendordep clean test build validateVendordepJson --stacktrace
 
-      - name: Publish and verify static Maven repository
+      - name: Verify committed static Maven repository without rewriting it
         run: ./vendordep/gradlew -p vendordep verifyPublishedVendordep --stacktrace

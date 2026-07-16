@@ -179,7 +179,7 @@ export function RobotTimeline({
         {showThreshold ? (
           <span className="inline-flex items-center gap-1.5 text-xs text-ink-dim">
             <span className="h-0 w-4 border-t-2 border-dashed" style={{ borderColor: COLORS.threshold }} aria-hidden />
-            Brownout 电压阈值
+            Brownout 电压
           </span>
         ) : null}
       </section>
@@ -546,7 +546,7 @@ export function createRobotTimelineOption(
       ...(threshold.length > 0
         ? [{
             id: "brownout-voltage",
-            name: "Brownout 电压阈值",
+            name: "Brownout 电压",
             type: "line" as const,
             data: threshold,
             xAxisIndex: 0,

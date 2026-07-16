@@ -109,8 +109,12 @@ export function SupplyLimitSimulator({
 
   return (
     <div className="grid gap-2.5">
-      <section className="card overflow-hidden" aria-label="限流模拟配置">
-        <div className="flex flex-wrap items-center justify-end gap-2 border-b border-line px-4 py-3">
+      <section className="card" aria-label="限流模拟配置">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
+          <div className="flex items-center gap-2">
+            <h2 className="text-sm font-semibold text-ink">明细</h2>
+            <SupplyLimitHelp />
+          </div>
           <div className="flex items-center gap-2">
             <ToggleSwitch
               checked={simulationEnabled}
@@ -271,7 +275,6 @@ export function SupplyLimitSimulator({
       </section>
 
       {simulationEnabled && estimate ? <SupplyLimitResults estimate={estimate} /> : null}
-      <SupplyLimitHelp />
     </div>
   );
 }
@@ -359,7 +362,7 @@ function SupplyLimitHelp() {
   const [open, setOpen] = useState(false);
   const pointerTypeRef = useRef<string | null>(null);
   return (
-    <aside className="relative flex justify-end" aria-label="限流模拟说明">
+    <aside className="relative" aria-label="限流模拟说明">
       <div
         className="relative"
         onMouseEnter={() => setOpen(true)}
@@ -398,8 +401,8 @@ function SupplyLimitHelp() {
           id="supply-limit-help-content"
           role="tooltip"
           className={[
-            "absolute bottom-11 right-0 z-20 w-[min(36rem,calc(100vw-2rem))] rounded-lg border border-line bg-surface px-4 py-3 text-xs leading-5 text-ink-dim shadow-xl transition",
-            open ? "visible translate-y-0 opacity-100" : "invisible translate-y-1 opacity-0",
+            "absolute bottom-11 left-0 z-20 w-[min(36rem,calc(100vw-5rem))] rounded-lg border border-line bg-surface px-4 py-3 text-xs leading-5 text-ink-dim shadow-xl transition sm:bottom-auto sm:top-11",
+            open ? "visible opacity-100" : "invisible opacity-0",
           ].join(" ")}
         >
           <ul className="list-disc space-y-1 pl-4">

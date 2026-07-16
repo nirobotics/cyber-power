@@ -1,10 +1,20 @@
 import { reactRouter } from "@react-router/dev/vite";
 import tailwindcss from "@tailwindcss/vite";
+import { readFileSync } from "node:fs";
 import { defineConfig } from "vite";
 import { VitePWA } from "vite-plugin-pwa";
 import { OFFLINE_NAVIGATION_CACHE } from "./app/lib/pwa";
 
+const appVersion = readFileSync(new URL("./VERSION", import.meta.url), "utf8").trim();
+
+if (!/^\d{4}\.\d+\.\d+$/.test(appVersion)) {
+  throw new Error(`VERSION must use the YYYY.M.P format; received: ${appVersion || "<empty>"}`);
+}
+
 export default defineConfig({
+  define: {
+    __APP_VERSION__: JSON.stringify(appVersion),
+  },
   plugins: [
     tailwindcss(),
     reactRouter(),

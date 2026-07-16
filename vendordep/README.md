@@ -1,15 +1,21 @@
 # Cyber Power Vendordep
 
-Cyber Power 的 Java 17/WPILib 2026 机器人端 EnergyLogger V2 记录库。公开包路径为 `com.nextinnovation.cyberpower`，当前版本为 `2026.2.2`。
+Cyber Power 的 Java 17/WPILib 2026 机器人端 EnergyLogger V2 记录库。公开包路径为 `com.nextinnovation.cyberpower`；当前版本以仓库根目录 `VERSION`、网页页脚和 GitHub Release 为准。
 
 机器人端只写 EnergyLogger `2.3`，不提供 V1 写入 API、兼容层或双写。网页端负责读取历史 V1、V2.1、V2.2 和当前 V2.3 日志。
 
-## 安装
+## 在线安装
 
-在 WPILib VS Code 的 Dependency Manager 中选择在线安装，并粘贴：
+在 WPILib VS Code 命令面板打开 `Manage Vendor Libraries`，选择 `Install new libraries (online)`，并粘贴：
 
 ```text
 https://power.team8214.com/vendordep/CyberPower.json
+```
+
+也可以在机器人项目根目录执行：
+
+```powershell
+.\gradlew.bat vendordep --url=https://power.team8214.com/vendordep/CyberPower.json
 ```
 
 机器人项目必须保留 WPILib 模板中的：
@@ -17,6 +23,36 @@ https://power.team8214.com/vendordep/CyberPower.json
 ```groovy
 implementation wpi.java.vendor.java()
 ```
+
+该地址会让 Gradle 从 Cyber Power 的 Maven 仓库解析 runtime JAR，因此只有 JSON 文件并不等于完全离线安装。
+
+## 离线安装
+
+1. 有仓库权限时可从对应版本的 [GitHub Release](https://github.com/nirobotics/cyber-power/releases) 下载；其他队伍从无需 GitHub 权限的公开镜像下载 `cyberpower-java-<VERSION>.jar`：
+
+   ```text
+   https://power.team8214.com/vendordep/releases/<VERSION>/cyberpower-java-<VERSION>.jar
+   ```
+
+2. 把 JAR 放入机器人项目的 `libs/` 目录。
+3. 删除机器人项目中的 `vendordeps/CyberPower.json`，或以其他方式停用这一项 Cyber Power vendordep；不要同时加载在线 vendordep 和本地 JAR，否则会产生重复类。
+4. 在机器人项目的 `build.gradle` 中加入：
+
+   ```groovy
+   dependencies {
+       implementation files("libs/cyberpower-java-<VERSION>.jar")
+   }
+   ```
+
+5. 在已经安装 WPILib、且所需 WPILib 依赖已存在于本机缓存的环境中验证：
+
+   ```powershell
+   .\gradlew.bat clean build --offline
+   ```
+
+WPILib 模板中的 `implementation wpi.java.vendor.java()` 仍要保留给其他 vendordep 使用，不要为了 Cyber Power 的离线 JAR 删除这条通用配置。Release 同时提供的 `CyberPower.json` 便于审计或在线安装，但它仍引用远程 Maven URL；若要使用 WPILib Dependency Manager 的完整离线 vendordep 流程，还需要在本地提供对应 Maven 仓库，而不能只复制 JSON。
+
+每个 GitHub Release 固定附带 `CyberPower.json` 与 `cyberpower-java-<VERSION>.jar`，并公布 runtime JAR 的 SHA-256、WPILib 版本、EnergyLogger 契约和 Maven 坐标。当前版本以仓库根目录 `VERSION` 及页面页脚为准。
 
 ## 最小接入
 
@@ -97,10 +133,11 @@ energyLogger/subsystems/sN/motors/samples
 
 源码只依赖 Java、WPILib `wpilibj` 和 `wpiutil`；不依赖任何电机供应商库。
 
-## 生成 Maven 发布目录
+## 准备与校验发布目录
 
 ```powershell
-.\vendordep\gradlew.bat -p vendordep verifyPublishedVendordep
+pnpm release:prepare -- <VERSION>
+pnpm release:check
 ```
 
-该命令将不可变版本发布到 `public/vendordep/maven`。不得覆盖既有 Maven 版本。
+`release:prepare` 只用于准备一个尚不存在的新版本，并拒绝覆盖已有 Maven 版本。`release:check` 只读校验已经提交的 descriptor、Maven 制品、公开离线镜像、版本一致性与历史 SHA-256，不会重新发布或改写旧版本。完整维护流程见 [发布说明](../docs/releasing.md)。

@@ -1,0 +1,386 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "VERSION"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "vite.config.ts"
+      - "app/version.d.ts"
+      - "app/components/app-footer.tsx"
+      - "app/routes/api.version.ts"
+      - "app/routes.ts"
+      - "vendordep/**"
+      - "public/vendordep/**"
+      - "scripts/release-*.mjs"
+      - ".github/release-notes-template.md"
+      - ".github/workflows/release.yml"
+  pull_request:
+    paths:
+      - "VERSION"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "vite.config.ts"
+      - "app/version.d.ts"
+      - "app/components/app-footer.tsx"
+      - "app/routes/api.version.ts"
+      - "app/routes.ts"
+      - "vendordep/**"
+      - "public/vendordep/**"
+      - "scripts/release-*.mjs"
+      - ".github/release-notes-template.md"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: cyber-power-release-${{ github.sha }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read product version
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '\r\n' < VERSION)"
+          if [[ ! "$version" =~ ^[0-9]{4}\.[0-9]+\.[0-9]+$ ]]; then
+            echo "VERSION must use YYYY.M.P, received: $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: pnpm
+
+      - name: Install Web dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Enable Gradle wrapper
+        run: chmod +x vendordep/gradlew
+
+      - name: Check release consistency and immutable artifacts
+        run: pnpm release:check
+
+      - name: Validate Web application
+        run: |
+          pnpm typecheck
+          pnpm lint
+          pnpm test
+          pnpm build
+          pnpm bundle:check
+
+      - name: Validate Java library and committed Maven repository
+        run: >-
+          ./vendordep/gradlew -p vendordep
+          clean test build validateVendordepJson verifyPublishedVendordep
+          --stacktrace
+
+      - name: Validate Java-to-Web V2 contract
+        run: pnpm vendordep:contract
+
+  release:
+    needs: verify
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      VERSION: ${{ needs.verify.outputs.version }}
+      BASE_URL: https://power.team8214.com
+
+    steps:
+      - name: Checkout full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Prepare exact committed release assets
+        id: assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          artifact="cyberpower-java-$VERSION"
+          maven_dir="public/vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION"
+          jar="$maven_dir/$artifact.jar"
+          mirror_dir="public/vendordep/releases/$VERSION"
+
+          test -s public/vendordep/CyberPower.json
+          test -s "$jar"
+          test -s "$mirror_dir/CyberPower.json"
+          test -s "$mirror_dir/$artifact.jar"
+          cmp public/vendordep/CyberPower.json "$mirror_dir/CyberPower.json"
+          cmp "$jar" "$mirror_dir/$artifact.jar"
+
+          rm -rf release-assets
+          mkdir release-assets
+          cp public/vendordep/CyberPower.json release-assets/CyberPower.json
+          cp "$jar" "release-assets/$artifact.jar"
+
+          jar_sha256="$(sha256sum "release-assets/$artifact.jar" | cut -d ' ' -f 1)"
+          wpilib_version="$(sed -n 's/^wpilibVersion=//p' vendordep/gradle.properties | tr -d '\r\n')"
+          contract_version="$(sed -n 's/.*CONTRACT_VERSION = "\([^"]*\)".*/\1/p' vendordep/src/main/java/com/nextinnovation/cyberpower/EnergyLogger.java | head -n 1)"
+          test -n "$wpilib_version"
+          test -n "$contract_version"
+
+          {
+            echo "jar=release-assets/$artifact.jar"
+            echo "jar_name=$artifact.jar"
+            echo "jar_sha256=$jar_sha256"
+            echo "wpilib_version=$wpilib_version"
+            echo "contract_version=$contract_version"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Render release notes
+        shell: bash
+        env:
+          JAR_SHA256: ${{ steps.assets.outputs.jar_sha256 }}
+          WPILIB_VERSION: ${{ steps.assets.outputs.wpilib_version }}
+          CONTRACT_VERSION: ${{ steps.assets.outputs.contract_version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          previous_tag="$(git tag --merged "$GITHUB_SHA" --sort=-version:refname | grep -Fvx "$tag" | head -n 1 || true)"
+          if [[ -n "$previous_tag" ]]; then
+            range="$previous_tag..$GITHUB_SHA"
+          else
+            range="$GITHUB_SHA"
+          fi
+          git log "$range" --no-merges --max-count=50 --format='- %s (%h)' > release-changes.md
+          if [[ ! -s release-changes.md ]]; then
+            echo "- 发布 Cyber Power v$VERSION。" > release-changes.md
+          fi
+          python - <<'PY'
+          import os
+          from pathlib import Path
+
+          replacements = {
+              "{{VERSION}}": os.environ["VERSION"],
+              "{{CHANGES}}": Path("release-changes.md").read_text(encoding="utf-8").strip(),
+              "{{JAR_SHA256}}": os.environ["JAR_SHA256"],
+              "{{WPILIB_VERSION}}": os.environ["WPILIB_VERSION"],
+              "{{CONTRACT_VERSION}}": os.environ["CONTRACT_VERSION"],
+              "{{BOOTSTRAP_NOTE}}": (
+                  "> **历史制品补发：** `2026.2.2` runtime JAR 在统一发布工具链建立前已经发布；"
+                  "本 Release 保留其不可变字节，并以本页 SHA-256 为准。后续版本由 tag 内工具链生成并校验。"
+                  if os.environ["VERSION"] == "2026.2.2"
+                  else ""
+              ),
+          }
+          notes = Path(".github/release-notes-template.md").read_text(encoding="utf-8")
+          for token, value in replacements.items():
+              notes = notes.replace(token, value)
+          if "{{" in notes or "}}" in notes:
+              raise SystemExit("release notes contain an unresolved placeholder")
+          Path("release-notes.md").write_text(notes, encoding="utf-8")
+          PY
+
+      - name: Wait for and verify production deployment
+        shell: bash
+        run: |
+          set -euo pipefail
+          verify_production() {
+            local cache_bust="commit=$GITHUB_SHA"
+            local artifact="cyberpower-java-$VERSION.jar"
+            local maven_path="vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION/$artifact"
+            local mirror_path="vendordep/releases/$VERSION"
+            local curl_args=(--fail --silent --show-error --location --connect-timeout 5 --max-time 20 -H "Cache-Control: no-cache")
+
+            rm -rf production-downloads || return 1
+            mkdir production-downloads || return 1
+            curl "${curl_args[@]}" "$BASE_URL/api/version?$cache_bust" -o production-downloads/app-version.json || return 1
+            curl "${curl_args[@]}" "$BASE_URL/vendordep/CyberPower.json?$cache_bust" -o production-downloads/CyberPower.json || return 1
+            curl "${curl_args[@]}" "$BASE_URL/$maven_path?$cache_bust" -o production-downloads/maven.jar || return 1
+            curl "${curl_args[@]}" "$BASE_URL/$mirror_path/CyberPower.json?$cache_bust" -o production-downloads/mirror-CyberPower.json || return 1
+            curl "${curl_args[@]}" "$BASE_URL/$mirror_path/$artifact?$cache_bust" -o production-downloads/mirror.jar || return 1
+
+            node -e '
+              const [version, appVersionPath, descriptorPath, expectedDescriptorPath] = process.argv.slice(1);
+              const fs = require("node:fs");
+              const appVersion = JSON.parse(fs.readFileSync(appVersionPath, "utf8"));
+              const descriptor = JSON.parse(fs.readFileSync(descriptorPath, "utf8"));
+              const compareVersions = (left, right) => {
+                const a = left.split(".").map(Number);
+                const b = right.split(".").map(Number);
+                for (let index = 0; index < 3; index += 1) {
+                  if (a[index] !== b[index]) return a[index] - b[index];
+                }
+                return 0;
+              };
+              if (compareVersions(appVersion.version, version) < 0) {
+                throw new Error("production app version is " + appVersion.version + ", older than " + version);
+              }
+              if (
+                descriptor.version !== appVersion.version ||
+                descriptor.javaDependencies?.[0]?.version !== appVersion.version
+              ) {
+                throw new Error("production app and descriptor versions do not match");
+              }
+              if (
+                appVersion.version === version &&
+                !fs.readFileSync(descriptorPath).equals(fs.readFileSync(expectedDescriptorPath))
+              ) {
+                throw new Error("production descriptor bytes do not match the target release");
+              }
+            ' "$VERSION" production-downloads/app-version.json production-downloads/CyberPower.json release-assets/CyberPower.json || return 1
+
+            cmp release-assets/CyberPower.json production-downloads/mirror-CyberPower.json || return 1
+            cmp "release-assets/$artifact" production-downloads/maven.jar || return 1
+            cmp "release-assets/$artifact" production-downloads/mirror.jar || return 1
+          }
+
+          deployed=false
+          for attempt in $(seq 1 60); do
+            echo "Production verification attempt $attempt/60"
+            if verify_production; then
+              deployed=true
+              break
+            fi
+            sleep 10
+          done
+          if [[ "$deployed" != true ]]; then
+            echo "Production did not converge to v$VERSION within 10 minutes." >&2
+            exit 1
+          fi
+          sha256sum production-downloads/maven.jar
+
+      - name: Create or verify immutable GitHub Release
+        shell: bash
+        env:
+          JAR_NAME: ${{ steps.assets.outputs.jar_name }}
+          JAR_SHA256: ${{ steps.assets.outputs.jar_sha256 }}
+          WPILIB_VERSION: ${{ steps.assets.outputs.wpilib_version }}
+          CONTRACT_VERSION: ${{ steps.assets.outputs.contract_version }}
+        run: |
+          set -euo pipefail
+          tag="v$VERSION"
+          release_exists=false
+          if gh release view "$tag" >/dev/null 2>&1; then
+            release_exists=true
+            echo "Release $tag already exists; validating it without modification."
+          else
+            if git ls-remote --exit-code --tags origin "refs/tags/$tag" >/dev/null 2>&1; then
+              git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+              tag_commit="$(git rev-list -n 1 "$tag")"
+              if [[ "$tag_commit" != "$GITHUB_SHA" ]]; then
+                echo "Existing tag $tag points to $tag_commit, not $GITHUB_SHA; refusing to move it." >&2
+                exit 1
+              fi
+              gh release create "$tag" \
+                release-assets/CyberPower.json \
+                "release-assets/$JAR_NAME" \
+                --title "$tag" \
+                --notes-file release-notes.md \
+                --verify-tag
+            else
+              gh release create "$tag" \
+                release-assets/CyberPower.json \
+                "release-assets/$JAR_NAME" \
+                --target "$GITHUB_SHA" \
+                --title "$tag" \
+                --notes-file release-notes.md
+            fi
+          fi
+
+          git fetch --force origin "refs/tags/$tag:refs/tags/$tag"
+          gh release view "$tag" --json tagName,name,isDraft,isPrerelease > release-metadata.json
+          node -e '
+            const fs = require("node:fs");
+            const [expectedTag, metadataPath] = process.argv.slice(1);
+            const metadata = JSON.parse(fs.readFileSync(metadataPath, "utf8"));
+            if (
+              metadata.tagName !== expectedTag ||
+              metadata.name !== expectedTag ||
+              metadata.isDraft ||
+              metadata.isPrerelease
+            ) {
+              throw new Error("invalid immutable release metadata: " + JSON.stringify(metadata));
+            }
+          ' "$tag" release-metadata.json
+
+          tag_version="$(git show "$tag:VERSION" | tr -d '\r\n')"
+          if [[ "$tag_version" != "$VERSION" ]]; then
+            echo "Tag $tag contains VERSION $tag_version, expected $VERSION." >&2
+            exit 1
+          fi
+          tag_jar_path="public/vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION/$JAR_NAME"
+          git show "$tag:public/vendordep/CyberPower.json" > tag-CyberPower.json
+          git show "$tag:$tag_jar_path" > "tag-$JAR_NAME"
+          cmp release-assets/CyberPower.json tag-CyberPower.json
+          cmp "release-assets/$JAR_NAME" "tag-$JAR_NAME"
+
+          rm -rf release-downloads
+          mkdir release-downloads
+          gh release download "$tag" \
+            --dir release-downloads \
+            --pattern CyberPower.json \
+            --pattern "$JAR_NAME"
+
+          cmp release-assets/CyberPower.json release-downloads/CyberPower.json
+          cmp "release-assets/$JAR_NAME" "release-downloads/$JAR_NAME"
+          actual_sha256="$(sha256sum "release-downloads/$JAR_NAME" | cut -d ' ' -f 1)"
+          if [[ "$actual_sha256" != "$JAR_SHA256" ]]; then
+            echo "Release JAR SHA-256 mismatch: $actual_sha256 != $JAR_SHA256" >&2
+            exit 1
+          fi
+
+          printf '%s\n' CyberPower.json "$JAR_NAME" | sort > expected-assets.txt
+          gh release view "$tag" --json assets --jq '.assets[].name' | sort > actual-assets.txt
+          diff --unified expected-assets.txt actual-assets.txt
+
+          gh release view "$tag" --json body --jq .body > published-notes.md
+          grep -F "com.nextinnovation.cyberpower:cyberpower-java:$VERSION" published-notes.md
+          grep -F "https://power.team8214.com/vendordep/CyberPower.json" published-notes.md
+          grep -F "SHA-256: $JAR_SHA256" published-notes.md
+          grep -F "EnergyLogger 数据契约：" published-notes.md
+          grep -F "$CONTRACT_VERSION" published-notes.md
+          grep -F "WPILib：" published-notes.md
+          grep -F "$WPILIB_VERSION" published-notes.md
+          grep -F "避免在线 vendordep 与本地 JAR 产生重复类" published-notes.md
+          grep -F "clean build --offline" published-notes.md
+
+          if [[ "$release_exists" == true ]]; then
+            echo "Existing $tag passed immutable asset and release-note validation."
+          else
+            echo "Created and verified $tag."
+          fi

@@ -242,7 +242,8 @@ describe("BatteryAnalysisSection", () => {
     expect(html).toContain("回流中位数");
     expect(html).toContain("P25–P75");
     expect(html).toContain("观测时长");
-    expect(html).toContain("Brownout 电压 6.50 V");
+    expect(html).toContain("Brownout 电压");
+    expect(html).not.toContain("Brownout 电压 6.50 V");
     expect(html).not.toContain("按持续时间加权的电压中位数");
     expect(html).not.toContain("不代表恒定电池模型");
     expect(html).not.toContain("Brownout Voltage");

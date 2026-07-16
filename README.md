@@ -34,6 +34,12 @@ EnergyLogger v2.3 是当前独立的机器人端写入契约，不需要同时�
 - pnpm 11
 - 现代 Chromium、Firefox 或 Safari
 
+## 机器人端 EnergyLogger
+
+机器人端库通过 WPILib vendordep 安装，网页端继续独立部署。在线安装地址、完全离线使用 JAR 的方式和版本兼容说明见 [Vendordep 使用说明](vendordep/README.md)。
+
+每个产品版本使用仓库根目录 `VERSION` 作为唯一版本号，并发布同名 Git tag 与 GitHub Release。Release 固定附带 `CyberPower.json` 和 `cyberpower-java-<VERSION>.jar`；维护者的完整发版与验收流程见 [发布说明](docs/releasing.md)。
+
 ## 给人看的使用方法
 
 ```powershell

@@ -1,4 +1,5 @@
 .memory/SCRUM.md
+.release-state/
 node_modules/
 build/
 vendordep/build/

@@ -448,7 +448,7 @@ const ObservedDistributionCard = memo(function ObservedDistributionCard({
             {brownoutThresholdV !== null && Number.isFinite(brownoutThresholdV) ? (
               <span className="inline-flex items-center gap-1.5">
                 <span className="w-4 border-t border-dashed border-[#ef5b5b]" aria-hidden />
-                Brownout 电压 {formatNumber(brownoutThresholdV, 2)} V
+                Brownout 电压
               </span>
             ) : null}
           </div>

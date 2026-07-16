@@ -1,7 +1,7 @@
 {
   "name": "cyber-power",
   "private": true,
-  "version": "1.0.0",
+  "version": "2026.2.2",
   "type": "module",
   "scripts": {
     "dev": "react-router dev",
@@ -15,7 +15,9 @@
     "log:list": "tsx scripts/log-list.ts",
     "log:analyze": "tsx scripts/log-analyze.ts",
     "log:benchmark": "tsx scripts/log-benchmark.ts",
-    "vendordep:contract": "tsx scripts/verify-vendordep-fixture.ts"
+    "vendordep:contract": "tsx scripts/verify-vendordep-fixture.ts",
+    "release:check": "node scripts/release-check.mjs",
+    "release:prepare": "node scripts/release-prepare.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "2.86.2",

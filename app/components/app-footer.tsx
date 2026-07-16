@@ -11,7 +11,9 @@ export function AppFooter() {
         <p className="text-[11px] text-[var(--muted)]">
           © 2026 NI Robotics Limited。保留所有权利。
         </p>
-        <p className="text-[11px] text-[var(--muted)] sm:justify-self-end">v1.0.0</p>
+        <p className="text-[11px] text-[var(--muted)] sm:justify-self-end">
+          v{__APP_VERSION__}
+        </p>
       </div>
     </footer>
   );

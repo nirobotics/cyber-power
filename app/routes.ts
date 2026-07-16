@@ -8,4 +8,5 @@ export default [
     route("logout", "routes/auth.logout.tsx"),
   ]),
   route("api/auth/me", "routes/api.auth.me.ts"),
+  route("api/version", "routes/api.version.ts"),
 ] satisfies RouteConfig;

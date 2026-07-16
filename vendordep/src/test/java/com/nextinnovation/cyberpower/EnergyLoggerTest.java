@@ -79,7 +79,9 @@ class EnergyLoggerTest {
     logger.periodicRobot();
 
     assertEquals("2.3", sink.last("energyLogger/contractVersion").value());
-    assertEquals("2026.2.2", sink.last("energyLogger/libraryVersion").value());
+    assertEquals(
+        System.getProperty("cyberPower.version"),
+        sink.last("energyLogger/libraryVersion").value());
     assertEquals(
         "{\"subsystems\":[{\"name\":\"drive\",\"motors\":["
             + "{\"name\":\"frontLeft\",\"type\":\"NEO\","

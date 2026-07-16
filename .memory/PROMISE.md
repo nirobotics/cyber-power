@@ -1,3 +1,4 @@
+- Web 页脚版本、vendordep descriptor 版本与 Java 制品版本必须保持一致；今后每次版本号更新都必须创建 GitHub Release，并附带对应的 vendordep JSON 与 JAR，同时在 Release/README 中说明在线 vendordep 安装和离线 JAR 使用方法。
 - 8214 当前使用无通信能力的 PDP 2.0，生产日志不会提供可用的 PDP/PDP 总电流或总功率；Cyber Power 的电池分析只能使用 Battery Voltage 与已注册电机 Supply Current 总和。用户界面统一称为“整机”，但方法与限制必须明确该口径不是 PDP/PDH 总电流，不得表述成真实电池总电流、纯电池内阻、SOC、容量或整机总 Wh。
 - Cyber Power vendordep 只允许写入 EnergyLogger V2，彻底舍弃 V1 写入 API 与双写路径；网页端必须继续兼容读取既有 V1 日志，并同时支持 V2。
 - 限流模拟只能以 V2 Manifest 的 Leader 电机组为目标：一台 Leader 与其全部直接 Followers 使用合计 Supply Current 上限；不得把 canonical 子系统节点、Follower 单机或用户确认的聚合路径伪装成电机组。V1 继续用于历史分析，但因没有 Manifest 不提供限流模拟。

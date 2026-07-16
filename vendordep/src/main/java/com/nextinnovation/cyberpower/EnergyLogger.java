@@ -1,5 +1,8 @@
 package com.nextinnovation.cyberpower;
 
+import java.io.IOException;
+import java.io.InputStream;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -10,7 +13,7 @@ public final class EnergyLogger {
   static final String ROOT = "energyLogger/";
   static final String CONTRACT_VERSION = "2.3";
   static final long MAX_SAFE_TIMESTAMP_MICROS = 9_007_199_254_740_991L;
-  private static final String DEVELOPMENT_LIBRARY_VERSION = "2026.2.2";
+  private static final String VERSION_RESOURCE = "/META-INF/cyber-power-version.txt";
 
   private static EnergyLogger instance = new EnergyLogger();
 
@@ -160,10 +163,22 @@ public final class EnergyLogger {
   }
 
   private static String libraryVersion() {
+    try (InputStream stream = EnergyLogger.class.getResourceAsStream(VERSION_RESOURCE)) {
+      if (stream != null) {
+        String resourceVersion = new String(stream.readAllBytes(), StandardCharsets.UTF_8).strip();
+        if (resourceVersion.isEmpty()) {
+          throw new IllegalStateException("Generated Cyber Power version resource is empty");
+        }
+        return resourceVersion;
+      }
+    } catch (IOException error) {
+      throw new IllegalStateException("Unable to read generated Cyber Power version", error);
+    }
     String implementationVersion = EnergyLogger.class.getPackage().getImplementationVersion();
-    return implementationVersion == null || implementationVersion.isBlank()
-        ? DEVELOPMENT_LIBRARY_VERSION
-        : implementationVersion.strip();
+    if (implementationVersion != null && !implementationVersion.isBlank()) {
+      return implementationVersion.strip();
+    }
+    throw new IllegalStateException("Missing generated Cyber Power version resource");
   }
 
   private static double addOrNaN(double sum, double value) {

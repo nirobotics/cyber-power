@@ -356,10 +356,11 @@ describe("robot timeline cards", () => {
     }));
 
     expect(robotMarkup).not.toContain('aria-label="电池电压"');
-    expect(robotMarkup).not.toContain("Brownout 电压阈值");
+    expect(robotMarkup).not.toContain("Brownout 电压");
     expect(robotMarkup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(3);
     expect(batteryMarkup).toContain('aria-label="电池电压"');
-    expect(batteryMarkup).toContain("Brownout 电压阈值");
+    expect(batteryMarkup).toContain("Brownout 电压");
+    expect(batteryMarkup).not.toContain("Brownout 电压阈值");
     expect(batteryMarkup).not.toContain('aria-label="总电流"');
     expect(batteryMarkup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(1);
   });
