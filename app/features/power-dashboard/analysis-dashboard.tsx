@@ -313,6 +313,10 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
   const locatePeak = useCallback((kind: Exclude<TimelineFocus, null>) => {
     cancelPendingCursor();
     clearCursorPreview();
+    const peakValue = kind === "power"
+      ? analysis.totals.peakPowerW
+      : analysis.totals.peakCurrentA;
+    if (!Number.isFinite(peakValue)) return;
     const peakTimestampUs = kind === "power"
       ? analysis.totals.peakPowerTimestampUs
       : analysis.totals.peakCurrentTimestampUs;
@@ -320,7 +324,14 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
     cursorUsRef.current = timestampUs;
     setCursorUs(timestampUs);
     setFocus(kind);
-  }, [analysis.totals.peakCurrentTimestampUs, analysis.totals.peakPowerTimestampUs, cancelPendingCursor, clearCursorPreview]);
+  }, [
+    analysis.totals.peakCurrentA,
+    analysis.totals.peakCurrentTimestampUs,
+    analysis.totals.peakPowerW,
+    analysis.totals.peakPowerTimestampUs,
+    cancelPendingCursor,
+    clearCursorPreview,
+  ]);
 
   const displayedCursorUs = transientCursorUs ?? cursorUs;
 

@@ -211,10 +211,9 @@ export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyL
       droppedNonfiniteSamples += 1;
     }
     if (index + 1 < robotRows.timestampsUs.length && robotRows.timestampsUs[index + 1] > robotRows.timestampsUs[index]) {
-      if (!Number.isFinite(robotCurrent[index]) || !Number.isFinite(robotVoltage[index])) {
-        throw new Error("EnergyLogger V2 robot timeline contains an incomplete electrical interval");
+      if (Number.isFinite(robotCurrent[index]) && Number.isFinite(robotVoltage[index])) {
+        hasFiniteElectricalInterval = true;
       }
-      hasFiniteElectricalInterval = true;
     }
   }
   if (!hasFiniteElectricalInterval) {

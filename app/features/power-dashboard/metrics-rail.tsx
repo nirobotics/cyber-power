@@ -14,6 +14,8 @@ export function MetricsRail({
   onLocatePeakCurrent: () => void;
 }) {
   const { totals } = analysis;
+  const hasPeakPower = Number.isFinite(totals.peakPowerW);
+  const hasPeakCurrent = Number.isFinite(totals.peakCurrentA);
   const metrics: Array<{
     label: string;
     value: string;
@@ -32,14 +34,14 @@ export function MetricsRail({
     },
     {
       label: sourceContract === "v2" ? "整机峰值功率" : "峰值功率",
-      value: `${formatNumber(totals.peakPowerW, 1)} W`,
-      onClick: onLocatePeakPower,
+      value: hasPeakPower ? `${formatNumber(totals.peakPowerW, 1)} W` : "无可用数据",
+      onClick: hasPeakPower ? onLocatePeakPower : undefined,
       hint: sourceContract === "v2" ? "定位整机峰值功率时间" : "定位峰值功率时间",
     },
     {
       label: sourceContract === "v2" ? "整机峰值电流" : "峰值电流",
-      value: `${formatNumber(totals.peakCurrentA, 1)} A`,
-      onClick: onLocatePeakCurrent,
+      value: hasPeakCurrent ? `${formatNumber(totals.peakCurrentA, 1)} A` : "无可用数据",
+      onClick: hasPeakCurrent ? onLocatePeakCurrent : undefined,
       hint: sourceContract === "v2" ? "定位整机峰值电流时间" : "定位峰值电流时间",
     },
     {

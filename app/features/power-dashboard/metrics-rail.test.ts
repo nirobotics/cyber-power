@@ -67,4 +67,34 @@ describe("MetricsRail", () => {
     expect(markup).toContain('aria-label="定位整机峰值电流时间"');
     expect(markup).not.toContain("整机整机");
   });
+
+  it("shows unavailable peak metrics as data gaps without rendering locate buttons", () => {
+    const analysis = {
+      range: { startUs: 0, endUs: 1_000_000, durationSeconds: 1 },
+      totals: {
+        energyWh: 0,
+        averagePowerW: 0,
+        peakPowerW: Number.NaN,
+        peakPowerTimestampUs: 0,
+        peakCurrentA: Number.NaN,
+        peakCurrentTimestampUs: 0,
+        brownoutCount: 0,
+        brownoutDurationSeconds: 0,
+        enabledDurationSeconds: 1,
+        effectiveDurationSeconds: 1,
+      },
+      subsystems: [],
+    } as unknown as RangeAnalysis;
+
+    const markup = renderToStaticMarkup(createElement(MetricsRail, {
+      analysis,
+      sourceContract: "v2",
+      onLocatePeakPower: () => undefined,
+      onLocatePeakCurrent: () => undefined,
+    }));
+
+    expect(markup.match(/无可用数据/g)).toHaveLength(3);
+    expect(markup).not.toContain("定位整机峰值功率时间");
+    expect(markup).not.toContain("定位整机峰值电流时间");
+  });
 });

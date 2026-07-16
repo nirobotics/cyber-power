@@ -630,25 +630,34 @@ function peakNumericSample(
   startUs: number,
   endUs: number,
 ): { value: number; timestampUs: number } {
-  let peak = { value: heldNumeric(series, startUs, 0), timestampUs: startUs };
+  const heldValue = heldNumeric(series, startUs, Number.NaN);
+  let peak = {
+    value: Number.isFinite(heldValue) ? heldValue : Number.NEGATIVE_INFINITY,
+    timestampUs: startUs,
+  };
   let index = upperBound(series.timestampsUs, startUs);
   while (index < series.timestampsUs.length && series.timestampsUs[index] <= endUs) {
-    if (series.values[index] > peak.value) {
-      peak = { value: series.values[index], timestampUs: series.timestampsUs[index] };
+    const candidate = series.values[index];
+    if (Number.isFinite(candidate) && candidate > peak.value) {
+      peak = { value: candidate, timestampUs: series.timestampsUs[index] };
     }
     index += 1;
   }
-  return peak;
+  return Number.isFinite(peak.value)
+    ? peak
+    : { value: Number.NaN, timestampUs: startUs };
 }
 
-function minNumeric(series: NumericSeries, startUs: number, endUs: number): number {
-  let minimum = heldNumeric(series, startUs, Number.POSITIVE_INFINITY);
+function minNumeric(series: NumericSeries, startUs: number, endUs: number): number | undefined {
+  const heldValue = heldNumeric(series, startUs, Number.NaN);
+  let minimum = Number.isFinite(heldValue) ? heldValue : Number.POSITIVE_INFINITY;
   let index = upperBound(series.timestampsUs, startUs);
   while (index < series.timestampsUs.length && series.timestampsUs[index] <= endUs) {
-    minimum = Math.min(minimum, series.values[index]);
+    const candidate = series.values[index];
+    if (Number.isFinite(candidate)) minimum = Math.min(minimum, candidate);
     index += 1;
   }
-  return minimum;
+  return Number.isFinite(minimum) ? minimum : undefined;
 }
 
 function booleanIntervals(

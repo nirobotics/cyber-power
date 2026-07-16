@@ -1,3 +1,4 @@
+- AdvantageKit/EnergyLogger 日志常见两类可恢复不完整性：文件尾部最后一条 record 被截断，以及 V2.3 电机断连时整机 Supply Current 短暂写为 `NaN`。解析器只能把“中段结构损坏”或“全程没有任何有限电气区间”视为 fatal；局部 `NaN` 区间必须保留为空洞、停止该区间积分并继续恢复后的数据，同时让完全落在空洞内的峰值显示为无可用数据，不能伪装成 0。
 - Vercel CLI `50.1.3` 的 `vercel logs` 只能监听从命令启动后最多 5 分钟的新日志，不支持历史时间或级别过滤；生产冒烟应先启动监听再发送请求，无输出只能证明监听窗口内没有应用日志，不能当作完整访问日志审计。
 - 当本机 Node 版本不符合项目 `22.x` 且 `.vercel/output` 不是当前制品时，生产发布应使用 `vercel deploy --prod --scope ni-corporate` 交给 Vercel Node 22 远端构建，禁止直接发布旧 `--prebuilt` 输出；未提交工作区会进入 CLI 快照，但部署 Git 元数据仍指向旧提交，需要在交接中明确追溯风险。
 - Phoenix 6 的 Stator Current 是有符号工况量：正值表示 motoring、负值表示 regenerative braking（再生制动工况），且与旋转方向无关；负 Stator 本身不证明电池净回充，设备返回直流母线的功率应看带符号的 Supply Voltage 与 Supply Current，整机净回充还需看电池端总功率。Supply Current 必须保留电池侧符号。V2.2 已发布为 Stator 幅值语义，不能原地移除 `abs`；V2.3 通过新契约保留 Stator 符号，网页必须继续按版本解释。

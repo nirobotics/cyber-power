@@ -6,7 +6,7 @@ import {
   buildEnergyV2Fixture,
 } from "../../../../tests/fixtures/wpilog-builder";
 import { LogAnalysisError } from "./errors";
-import { parseEnergyLog } from "./energy-analysis";
+import { analyzeEnergyRange, parseEnergyLog } from "./energy-analysis";
 
 function hasCode(error: unknown, code: string): boolean {
   return error instanceof LogAnalysisError && error.issues.some((issue) => issue.code === code);
@@ -151,13 +151,87 @@ describe("fixed EnergyLogger V2 parser", () => {
     );
   });
 
-  it("rejects an incomplete positive-duration robot electrical interval", async () => {
+  it("keeps finite robot intervals around a temporary unavailable electrical interval", async () => {
     const fixture = buildEnergyV2Fixture();
     appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "DRIVE", indexer: "IDLE" }, 0);
     fixture.builder
       .double(fixture.entries.robotCurrent, 1_500_000, Number.NaN)
       .int64(fixture.entries.robotTimestamp, 1_500_000, 1_500_000);
-    appendEnergyV2FixtureSample(fixture, 2_000_000, { drive: "DRIVE", indexer: "IDLE" }, 1);
+    appendEnergyV2FixtureSample(
+      fixture,
+      2_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      1,
+      { robotCurrentA: 30, robotVoltageV: 11 },
+    );
+    appendEnergyV2FixtureSample(
+      fixture,
+      2_500_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      2,
+      { robotCurrentA: 30, robotVoltageV: 11 },
+    );
+
+    const dataset = await parseEnergyLog(fixture.builder.build());
+
+    expect(dataset.series.totalCurrentA.values).toEqual(
+      Float64Array.from([25, Number.NaN, 30, 30]),
+    );
+    expect(dataset.series.totalPowerW.values).toEqual(
+      Float64Array.from([300, Number.NaN, 330, 330]),
+    );
+    expect(dataset.series.batteryVoltageV?.values).toEqual(
+      Float64Array.from([12, 12, 11, 11]),
+    );
+    expect(dataset.series.totalEnergyWh.values).toEqual(
+      Float64Array.from([
+        0,
+        300 / 3600 / 2,
+        300 / 3600 / 2,
+        300 / 3600 / 2 + 330 / 3600 / 2,
+      ]),
+    );
+    expect(dataset.quality.issues).toContainEqual(
+      expect.objectContaining({
+        code: "NONFINITE_VALUE_DROPPED",
+        severity: "warning",
+        details: { droppedNonfiniteSamples: 1 },
+      }),
+    );
+    expect(
+      analyzeEnergyRange(dataset, { startUs: 1_500_000, endUs: 2_000_000 }).totals,
+    ).toMatchObject({
+      peakPowerW: 330,
+      peakPowerTimestampUs: 2_000_000,
+      peakCurrentA: 30,
+      peakCurrentTimestampUs: 2_000_000,
+      minVoltageV: 11,
+    });
+    expect(
+      analyzeEnergyRange(dataset, { startUs: 1_600_000, endUs: 1_900_000 }).totals,
+    ).toMatchObject({
+      peakPowerW: Number.NaN,
+      peakCurrentA: Number.NaN,
+      minVoltageV: 12,
+    });
+  });
+
+  it("rejects a robot timeline with no finite electrical interval", async () => {
+    const fixture = buildEnergyV2Fixture();
+    appendEnergyV2FixtureSample(
+      fixture,
+      1_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      0,
+      { robotCurrentA: Number.NaN },
+    );
+    appendEnergyV2FixtureSample(
+      fixture,
+      2_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      1,
+      { robotCurrentA: Number.NaN },
+    );
 
     await expect(parseEnergyLog(fixture.builder.build())).rejects.toSatisfy((error: unknown) =>
       hasCode(error, "NO_FINITE_ENERGY_DATA"),
