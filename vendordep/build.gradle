@@ -706,7 +706,7 @@ tasks.register("testVendordepReleaseGate") {
             )
         }
 
-        rejectKnownV1Versions(["2026.2.0", "2026.2.1", "2026.2.2"])
+        rejectKnownV1Versions(["2026.2.0", "2026.2.1", canonicalProductVersion])
         blockedV1WriterVersions.each { blockedVersion ->
             expectRejection(blockedVersion) {
                 rejectKnownV1Versions([blockedVersion, "2026.2.0"])
@@ -750,7 +750,8 @@ tasks.register("testVendordepReleaseGate") {
         validatePublishedV2Repository(immutableRepositoryFixture)
         File unexpectedFile = new File(
             immutableRepositoryFixture,
-            "com/nextinnovation/cyberpower/${artifactName}/2026.2.2/unexpected.txt",
+            "com/nextinnovation/cyberpower/${artifactName}/"
+                + "${canonicalProductVersion}/unexpected.txt",
         )
         unexpectedFile.setText("unexpected", "UTF-8")
         expectRejection("does not exactly cover") {
@@ -761,8 +762,8 @@ tasks.register("testVendordepReleaseGate") {
         }
         File tamperedRuntime = new File(
             immutableRepositoryFixture,
-            "com/nextinnovation/cyberpower/${artifactName}/2026.2.2/"
-                + "${artifactName}-2026.2.2.jar",
+            "com/nextinnovation/cyberpower/${artifactName}/${canonicalProductVersion}/"
+                + "${artifactName}-${canonicalProductVersion}.jar",
         )
         tamperedRuntime.append("tampered", "UTF-8")
         expectRejection("Immutable historical artifact changed") {

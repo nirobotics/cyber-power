@@ -35,7 +35,7 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: cyber-power-release-${{ github.sha }}
+  group: cyber-power-release-${{ github.ref }}
   cancel-in-progress: false
 
 permissions:
@@ -233,6 +233,34 @@ jobs:
             curl "${curl_args[@]}" "$BASE_URL/$maven_path?$cache_bust" -o production-downloads/maven.jar || return 1
             curl "${curl_args[@]}" "$BASE_URL/$mirror_path/CyberPower.json?$cache_bust" -o production-downloads/mirror-CyberPower.json || return 1
             curl "${curl_args[@]}" "$BASE_URL/$mirror_path/$artifact?$cache_bust" -o production-downloads/mirror.jar || return 1
+
+            node -e '
+              const [version, manifestPath] = process.argv.slice(1);
+              const fs = require("node:fs");
+              const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+              const artifactRoot = "com/nextinnovation/cyberpower/cyberpower-java";
+              const versionPrefix = `${artifactRoot}/${version}/`;
+              const versionFiles = Object.keys(manifest.artifacts ?? {})
+                .filter((path) => path.startsWith(versionPrefix))
+                .sort();
+              if (versionFiles.length === 0) {
+                throw new Error(`immutable manifest has no Maven files for ${version}`);
+              }
+              const metadataFiles = ["", ".md5", ".sha1", ".sha256", ".sha512"]
+                .map((suffix) => `${artifactRoot}/maven-metadata.xml${suffix}`);
+              process.stdout.write([...versionFiles, ...metadataFiles].join("\n") + "\n");
+            ' "$VERSION" vendordep/immutable-artifacts.json > production-downloads/maven-files.txt || return 1
+
+            while IFS= read -r relative_path; do
+              local expected="public/vendordep/maven/$relative_path"
+              local downloaded="production-downloads/maven-repository/$relative_path"
+              test -s "$expected" || return 1
+              mkdir -p "$(dirname "$downloaded")" || return 1
+              curl "${curl_args[@]}" \
+                "$BASE_URL/vendordep/maven/$relative_path?$cache_bust" \
+                -o "$downloaded" || return 1
+              cmp "$expected" "$downloaded" || return 1
+            done < production-downloads/maven-files.txt
 
             node -e '
               const [version, appVersionPath, descriptorPath, expectedDescriptorPath] = process.argv.slice(1);

@@ -48,3 +48,4 @@
 - 已公开 Maven 版本必须逐文件不可变；校验任务只能只读并对照固定 SHA-256，不能先把当前源码重新发布进受版本控制的公开仓库再校验，否则会把“验证”变成覆盖历史制品。新版本必须先构建到隔离候选目录，通过完整契约与哈希检查后，再以短事务提升为公开版本。
 - GitHub 私有仓库的 Release 资产不能作为外部队伍匿名下载入口；私有 Release 用于内部可追溯归档，同时必须在 `power.team8214.com` 保留同版本的公开 descriptor、Maven 制品和版本化 JSON/JAR 镜像。在线与离线文档都要明确这两个入口的权限边界。
 - 版本提升事务的排他锁和恢复 journal 不能放在 Gradle `build/` 等会被普通清理任务删除的目录；锁接管不得通过“检查旧 PID 后直接删除路径”实现，否则存在 TOCTOU 并发窗口。恢复前必须先完整验证 journal 与全部快照，再修改任何公开文件。
+- `public/vendordep/**` 是按字节不可变的发布树，必须用 `.gitattributes -text` 禁止 Git 行尾转换；否则 Windows 工作树计算的 POM、Maven metadata 与 sidecar/manifest 哈希会在 Linux checkout 和生产部署中失效。生产验收必须逐文件比较当前版本 Maven 制品及 metadata sidecar，不能只检查 runtime JAR。
