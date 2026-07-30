@@ -8,6 +8,19 @@ async function* oneByteChunks(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
   for (const byte of bytes) yield Uint8Array.of(byte);
 }
 
+function alignedTailFixture<T>(
+  tailPrefixLength: number,
+  populate: (builder: WpiLogFixtureBuilder) => T,
+): { builder: WpiLogFixtureBuilder; value: T } {
+  const measured = new WpiLogFixtureBuilder("");
+  populate(measured);
+  const targetModulo = (4096 - tailPrefixLength) % 4096;
+  const extraHeaderLength =
+    (targetModulo - measured.build().byteLength % 4096 + 4096) % 4096;
+  const builder = new WpiLogFixtureBuilder("x".repeat(extraHeaderLength));
+  return { builder, value: populate(builder) };
+}
+
 describe("WPILOG 1.0 decoder", () => {
   it("decodes scalar and array values using the WPILOG little-endian encoding", async () => {
     const builder = new WpiLogFixtureBuilder("typed-values");
@@ -222,5 +235,103 @@ describe("WPILOG 1.0 decoder", () => {
       lastTimestampUs: 2,
     });
     expect(listing.entries[0]).toMatchObject({ recordCount: 2, lastTimestampUs: 2 });
+  });
+
+  it("recovers a partially written final record hidden by zero-filled padding", async () => {
+    const { builder, value: entry } = alignedTailFixture(3, (fixture) => {
+      const fixtureEntry = fixture.start("/Example/Raw", "raw");
+      fixture.raw(fixtureEntry, 2_000_000, new Uint8Array(80).fill(7));
+      return fixtureEntry;
+    });
+    const lastGoodOffset = builder.build().byteLength;
+    builder
+      .appendBytes(Uint8Array.of(0x30, entry, 80))
+      .appendBytes(new Uint8Array(4096));
+    const padded = builder.build();
+
+    const listing = await listWpiLog(oneByteChunks(padded));
+
+    expect(listing.file).toMatchObject({
+      recordCount: 2,
+      lastGoodOffset,
+      truncatedTail: {
+        offset: lastGoodOffset,
+        headerBytesAvailable: 3,
+      },
+    });
+    expect(listing.entries[0]).toMatchObject({ recordCount: 1, lastTimestampUs: 2_000_000 });
+    expect(listing.issues).toContainEqual(
+      expect.objectContaining({ code: "TRUNCATED_TAIL_RECOVERED", offset: lastGoodOffset }),
+    );
+
+    const nonTerminal = new Uint8Array(padded.byteLength + 1);
+    nonTerminal.set(padded);
+    nonTerminal[nonTerminal.length - 1] = 1;
+    await expect(listWpiLog(oneByteChunks(nonTerminal))).rejects.toSatisfy(
+      (error: unknown) =>
+        error instanceof LogAnalysisError &&
+        error.issues[0]?.code === "CORRUPT_RECORD_MIDDLE",
+    );
+  });
+
+  it("recovers when zero fill completes a fixed-width record header", async () => {
+    const { builder, value: entry } = alignedTailFixture(2, (fixture) =>
+      fixture.start("/Example/Double", "double")
+    );
+    const lastGoodOffset = builder.build().byteLength;
+    builder
+      .appendBytes(Uint8Array.of(0x30, entry))
+      .appendBytes(new Uint8Array(4096));
+
+    const listing = await listWpiLog(oneByteChunks(builder.build()));
+
+    expect(listing.file).toMatchObject({
+      recordCount: 1,
+      dataRecordCount: 0,
+      lastGoodOffset,
+      truncatedTail: { offset: lastGoodOffset, headerBytesAvailable: 2 },
+    });
+    expect(listing.entries[0]).toMatchObject({ recordCount: 0 });
+  });
+
+  it("keeps a valid all-zero final record before a zero-filled block", async () => {
+    const { builder } = alignedTailFixture(0, (fixture) => {
+      const fixtureEntry = fixture.start("/Example/Raw", "raw");
+      fixture
+        .raw(fixtureEntry, 2_000_000, Uint8Array.of(7))
+        .raw(fixtureEntry, 0, new Uint8Array(80));
+      return fixtureEntry;
+    });
+    const lastGoodOffset = builder.build().byteLength;
+    builder.appendBytes(new Uint8Array(4096));
+
+    const listing = await listWpiLog(builder.build());
+
+    expect(listing.file).toMatchObject({
+      recordCount: 3,
+      dataRecordCount: 2,
+      lastGoodOffset,
+      truncatedTail: { offset: lastGoodOffset, headerBytesAvailable: 0 },
+    });
+    expect(listing.entries[0]).toMatchObject({ recordCount: 2, lastTimestampUs: 2_000_000 });
+  });
+
+  it("keeps an aligned final record whose payload ends with a full zero block", async () => {
+    const { builder } = alignedTailFixture(0, (fixture) => {
+      const fixtureEntry = fixture.start("/Example/Raw", "raw");
+      fixture.raw(fixtureEntry, 0, new Uint8Array(4096));
+      return fixtureEntry;
+    });
+    const lastGoodOffset = builder.build().byteLength;
+
+    const listing = await listWpiLog(builder.build());
+
+    expect(listing.file).toMatchObject({
+      recordCount: 2,
+      dataRecordCount: 1,
+      lastGoodOffset,
+    });
+    expect(listing.file.truncatedTail).toBeUndefined();
+    expect(listing.entries[0]).toMatchObject({ recordCount: 1, lastTimestampUs: 0 });
   });
 });

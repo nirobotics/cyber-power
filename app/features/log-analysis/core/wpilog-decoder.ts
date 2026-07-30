@@ -14,6 +14,7 @@ import type {
 const MAGIC = new Uint8Array([0x57, 0x50, 0x49, 0x4c, 0x4f, 0x47]);
 const VERSION_1_0 = 0x0100;
 const DECODE_WINDOW_SIZE = 64 * 1024;
+const ZERO_FILL_BLOCK_SIZE = 4096;
 const EMPTY_BYTES = new Uint8Array(0);
 const utf8Decoder = new TextDecoder("utf-8", { fatal: true });
 
@@ -130,6 +131,11 @@ function decodeStringArray(
 
 function dataView(payload: Uint8Array): DataView {
   return new DataView(payload.buffer, payload.byteOffset, payload.byteLength);
+}
+
+function isAllZero(bytes: Uint8Array): boolean {
+  for (const byte of bytes) if (byte !== 0) return false;
+  return true;
 }
 
 function decodeDataValue(
@@ -296,6 +302,8 @@ class WpiLogStreamDecoder {
   finish(sizeBytes?: number): WpiLogListing {
     if (this.finished) throw new Error("WPILOG decoder was already finished");
     this.finished = true;
+    const zeroFillBytes = this.removeZeroFilledTailBlock();
+    this.processAvailable(true);
 
     if (!this.header) {
       throw new LogAnalysisError(
@@ -305,13 +313,20 @@ class WpiLogStreamDecoder {
       );
     }
 
-    if (this.buffer.byteLength > 0) {
+    if (this.buffer.byteLength > 0 || zeroFillBytes > 0) {
       this.truncatedTail = this.describeTruncatedTail();
       this.issues.push(
         warningIssue(
           "TRUNCATED_TAIL_RECOVERED",
-          `Ignored an incomplete final record (${this.truncatedTail.missingBytes ?? "unknown"} missing bytes)`,
-          { offset: this.truncatedTail.offset, details: { ...this.truncatedTail } },
+          zeroFillBytes > 0
+            ? `Ignored a zero-filled incomplete final record (${zeroFillBytes} trailing zero bytes)`
+            : `Ignored an incomplete final record (${this.truncatedTail.missingBytes ?? "unknown"} missing bytes)`,
+          {
+            offset: this.truncatedTail.offset,
+            details: zeroFillBytes > 0
+              ? { ...this.truncatedTail, zeroFillBytes }
+              : { ...this.truncatedTail },
+          },
         ),
       );
     }
@@ -335,7 +350,7 @@ class WpiLogStreamDecoder {
     };
   }
 
-  private processAvailable(): void {
+  private processAvailable(final = false): void {
     let cursor = 0;
 
     if (!this.header) {
@@ -390,6 +405,8 @@ class WpiLogStreamDecoder {
     }
 
     while (cursor < this.buffer.byteLength) {
+      if (!final && isAllZero(this.buffer.subarray(cursor))) break;
+
       const recordOffset = this.bufferOffset + cursor;
       const header = this.tryReadRecordHeader(cursor, recordOffset);
       if (!header) break;
@@ -398,6 +415,14 @@ class WpiLogStreamDecoder {
 
       const payloadStart = cursor + header.headerLength;
       const payload = this.buffer.subarray(payloadStart, payloadStart + header.payloadLength);
+      const trailing = this.buffer.subarray(cursor + recordLength);
+      if (!final && (trailing.byteLength === 0 || isAllZero(trailing))) break;
+
+      header.entry = this.validateDeclaredDataLength(
+        header.entryId,
+        header.payloadLength,
+        recordOffset,
+      );
       this.handleRecord(header, payload, recordOffset);
       cursor += recordLength;
       this.recordCount += 1;
@@ -416,6 +441,28 @@ class WpiLogStreamDecoder {
     this.bufferOffset += cursor;
     this.buffer =
       cursor === this.buffer.byteLength ? EMPTY_BYTES : this.buffer.slice(cursor);
+  }
+
+  private removeZeroFilledTailBlock(): number {
+    const endOffset = this.bufferOffset + this.buffer.byteLength;
+    if (
+      endOffset % ZERO_FILL_BLOCK_SIZE !== 0 ||
+      this.buffer.byteLength < ZERO_FILL_BLOCK_SIZE
+    ) {
+      return 0;
+    }
+
+    const blockOffset = this.buffer.byteLength - ZERO_FILL_BLOCK_SIZE;
+    if (!isAllZero(this.buffer.subarray(blockOffset))) return 0;
+    const pendingHeader = this.tryReadRecordHeader(0, this.bufferOffset);
+    if (
+      pendingHeader &&
+      pendingHeader.headerLength + pendingHeader.payloadLength === this.buffer.byteLength
+    ) {
+      return 0;
+    }
+    this.buffer = this.buffer.slice(0, blockOffset);
+    return ZERO_FILL_BLOCK_SIZE;
   }
 
   private tryReadRecordHeader(cursor: number, recordOffset: number): RecordHeader | undefined {
@@ -445,8 +492,7 @@ class WpiLogStreamDecoder {
     );
     fieldOffset += payloadLengthBytes;
     const timestampUs = readTimestamp(this.buffer, fieldOffset, timestampLength, recordOffset);
-    const entry = this.validateDeclaredDataLength(entryId, payloadLength, recordOffset);
-    const header = { entryId, payloadLength, timestampUs, headerLength, entry };
+    const header = { entryId, payloadLength, timestampUs, headerLength };
     return header;
   }
 
