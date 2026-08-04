@@ -1,19 +1,14 @@
 import type { ReactNode } from "react";
 import { AppFooter } from "./app-footer";
 import { AppHeader } from "./app-header";
-import type { PublicUser } from "../lib/auth-types";
 
 export function AppShell({
   centerTitle,
-  user,
-  authLoading,
   busy,
   onReplaceFile,
   children,
 }: {
   centerTitle?: string | null;
-  user: PublicUser | null;
-  authLoading: boolean;
   busy: boolean;
   onReplaceFile?: (() => void) | null;
   children: ReactNode;
@@ -23,8 +18,6 @@ export function AppShell({
       <TopProgressBar active={busy} />
       <AppHeader
         centerTitle={centerTitle}
-        user={user}
-        authLoading={authLoading}
         onReplaceFile={onReplaceFile}
       />
       <main className="flex-1 p-2.5">{children}</main>

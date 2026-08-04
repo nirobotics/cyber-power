@@ -15,8 +15,14 @@ export const VERSION_FILE = join(ROOT, "VERSION");
 export const PACKAGE_FILE = join(ROOT, "package.json");
 export const DESCRIPTOR_FILE = join(ROOT, "public", "vendordep", "CyberPower.json");
 export const MAVEN_ROOT = join(ROOT, "public", "vendordep", "maven");
-export const ARTIFACT_RELATIVE_ROOT =
-  "com/nextinnovation/cyberpower/cyberpower-java";
+export const ARTIFACT_ID = "cyberpower-java";
+export const CURRENT_GROUP_ID = "com.team8214.cyberpower";
+export const LEGACY_GROUP_ID = "com.nextinnovation.cyberpower";
+export const PUBLISHED_GROUP_IDS = [LEGACY_GROUP_ID, CURRENT_GROUP_ID];
+export function artifactRelativeRoot(groupId) {
+  return `${groupId.split(".").join("/")}/${ARTIFACT_ID}`;
+}
+export const ARTIFACT_RELATIVE_ROOT = artifactRelativeRoot(CURRENT_GROUP_ID);
 export const ARTIFACT_ROOT = join(MAVEN_ROOT, ...ARTIFACT_RELATIVE_ROOT.split("/"));
 export const METADATA_FILE = join(ARTIFACT_ROOT, "maven-metadata.xml");
 export const MIRROR_ROOT = join(ROOT, "public", "vendordep", "releases");
@@ -133,11 +139,11 @@ export function metadataValue(xml, element) {
   return match[1];
 }
 
-export function artifactJar(version, root = MAVEN_ROOT) {
+export function artifactJar(version, groupId = CURRENT_GROUP_ID, root = MAVEN_ROOT) {
   return join(
     root,
-    ...ARTIFACT_RELATIVE_ROOT.split("/"),
+    ...artifactRelativeRoot(groupId).split("/"),
     version,
-    `cyberpower-java-${version}.jar`,
+    `${ARTIFACT_ID}-${version}.jar`,
   );
 }

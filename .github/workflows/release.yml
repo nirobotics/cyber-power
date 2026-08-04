@@ -141,7 +141,7 @@ jobs:
         run: |
           set -euo pipefail
           artifact="cyberpower-java-$VERSION"
-          maven_dir="public/vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION"
+          maven_dir="public/vendordep/maven/com/team8214/cyberpower/cyberpower-java/$VERSION"
           jar="$maven_dir/$artifact.jar"
           mirror_dir="public/vendordep/releases/$VERSION"
 
@@ -159,7 +159,7 @@ jobs:
 
           jar_sha256="$(sha256sum "release-assets/$artifact.jar" | cut -d ' ' -f 1)"
           wpilib_version="$(sed -n 's/^wpilibVersion=//p' vendordep/gradle.properties | tr -d '\r\n')"
-          contract_version="$(sed -n 's/.*CONTRACT_VERSION = "\([^"]*\)".*/\1/p' vendordep/src/main/java/com/nextinnovation/cyberpower/EnergyLogger.java | head -n 1)"
+          contract_version="$(sed -n 's/.*CONTRACT_VERSION = "\([^"]*\)".*/\1/p' vendordep/src/main/java/com/team8214/cyberpower/EnergyLogger.java | head -n 1)"
           test -n "$wpilib_version"
           test -n "$contract_version"
 
@@ -222,7 +222,7 @@ jobs:
           verify_production() {
             local cache_bust="commit=$GITHUB_SHA"
             local artifact="cyberpower-java-$VERSION.jar"
-            local maven_path="vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION/$artifact"
+            local maven_path="vendordep/maven/com/team8214/cyberpower/cyberpower-java/$VERSION/$artifact"
             local mirror_path="vendordep/releases/$VERSION"
             local curl_args=(--fail --silent --show-error --location --connect-timeout 5 --max-time 20 -H "Cache-Control: no-cache")
 
@@ -238,7 +238,7 @@ jobs:
               const [version, manifestPath] = process.argv.slice(1);
               const fs = require("node:fs");
               const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
-              const artifactRoot = "com/nextinnovation/cyberpower/cyberpower-java";
+              const artifactRoot = "com/team8214/cyberpower/cyberpower-java";
               const versionPrefix = `${artifactRoot}/${version}/`;
               const versionFiles = Object.keys(manifest.artifacts ?? {})
                 .filter((path) => path.startsWith(versionPrefix))
@@ -371,7 +371,7 @@ jobs:
             echo "Tag $tag contains VERSION $tag_version, expected $VERSION." >&2
             exit 1
           fi
-          tag_jar_path="public/vendordep/maven/com/nextinnovation/cyberpower/cyberpower-java/$VERSION/$JAR_NAME"
+          tag_jar_path="public/vendordep/maven/com/team8214/cyberpower/cyberpower-java/$VERSION/$JAR_NAME"
           git show "$tag:public/vendordep/CyberPower.json" > tag-CyberPower.json
           git show "$tag:$tag_jar_path" > "tag-$JAR_NAME"
           cmp release-assets/CyberPower.json tag-CyberPower.json
@@ -397,7 +397,7 @@ jobs:
           diff --unified expected-assets.txt actual-assets.txt
 
           gh release view "$tag" --json body --jq .body > published-notes.md
-          grep -F "com.nextinnovation.cyberpower:cyberpower-java:$VERSION" published-notes.md
+          grep -F "com.team8214.cyberpower:cyberpower-java:$VERSION" published-notes.md
           grep -F "https://power.team8214.com/vendordep/CyberPower.json" published-notes.md
           grep -F "SHA-256: $JAR_SHA256" published-notes.md
           grep -F "EnergyLogger 数据契约：" published-notes.md

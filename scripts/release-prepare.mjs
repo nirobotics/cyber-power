@@ -15,9 +15,11 @@ import {
 } from "node:fs";
 import { join, relative } from "node:path";
 import {
+  ARTIFACT_ID,
   ARTIFACT_RELATIVE_ROOT,
   ARTIFACT_ROOT,
   CHECKSUM_ALGORITHMS,
+  CURRENT_GROUP_ID,
   DESCRIPTOR_FILE,
   IMMUTABLE_MANIFEST_FILE,
   METADATA_FILE,
@@ -268,17 +270,20 @@ function hashBytes(bytes) {
 
 function writeJournal(snapshots) {
   const journal = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     token: transactionToken,
     targetVersion,
     snapshots: Object.fromEntries(
       [...snapshots].map(([path, bytes]) => [
         toPosix(relative(ROOT, path)),
-        {
-          base64: bytes.toString("base64"),
-          byteLength: bytes.length,
-          sha256: hashBytes(bytes),
-        },
+        bytes === null
+          ? { exists: false }
+          : {
+              exists: true,
+              base64: bytes.toString("base64"),
+              byteLength: bytes.length,
+              sha256: hashBytes(bytes),
+            },
       ]),
     ),
   };
@@ -295,7 +300,7 @@ function writeJournal(snapshots) {
 
 function readValidatedJournal(expectedToken, expectedTargetVersion) {
   const journal = JSON.parse(readFileSync(JOURNAL_FILE, "utf8"));
-  assert(journal.schemaVersion === 2, "release:prepare 恢复日志版本无效");
+  assert(journal.schemaVersion === 3, "release:prepare 恢复日志版本无效");
   assert(VERSION_PATTERN.test(journal.targetVersion), "release:prepare 恢复日志目标版本无效");
   assert(UUID_PATTERN.test(journal.token), "release:prepare 恢复日志 token 无效");
   if (expectedToken !== undefined) {
@@ -320,11 +325,20 @@ function readValidatedJournal(expectedToken, expectedTargetVersion) {
     const key = toPosix(relative(ROOT, path));
     const record = journal.snapshots[key];
     assert(record && typeof record === "object" && !Array.isArray(record), `恢复快照无效：${key}`);
+    if (record.exists === false) {
+      assert(
+        JSON.stringify(Object.keys(record)) === JSON.stringify(["exists"]),
+        `不存在文件的恢复快照字段无效：${key}`,
+      );
+      decodedSnapshots.set(path, null);
+      continue;
+    }
     assert(
       JSON.stringify(Object.keys(record).sort()) ===
-        JSON.stringify(["base64", "byteLength", "sha256"]),
+        JSON.stringify(["base64", "byteLength", "exists", "sha256"]),
       `恢复快照字段无效：${key}`,
     );
+    assert(record.exists === true, `恢复快照 exists 无效：${key}`);
     assert(typeof record.base64 === "string", `恢复快照 base64 无效：${key}`);
     assert(
       Number.isSafeInteger(record.byteLength) && record.byteLength >= 0,
@@ -358,7 +372,8 @@ function recoverJournal(reason = "未完成", expectedToken, expectedTargetVersi
   rmSync(artifactDirectory(journal.targetVersion), { recursive: true, force: true });
   rmSync(mirrorDirectory(journal.targetVersion), { recursive: true, force: true });
   for (const [path, bytes] of decodedSnapshots) {
-    writeDurableFile(path, bytes);
+    if (bytes === null) rmSync(path, { force: true });
+    else writeDurableFile(path, bytes);
   }
   rmSync(JOURNAL_FILE, { force: true });
   syncStateDirectory();
@@ -389,7 +404,7 @@ function renderMetadata(versions) {
   ].join("");
   const versionLines = versions.map((version) => `      <version>${version}</version>`).join("\n");
   const latest = versions.at(-1);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n<metadata>\n  <groupId>com.nextinnovation.cyberpower</groupId>\n  <artifactId>cyberpower-java</artifactId>\n  <versioning>\n    <latest>${latest}</latest>\n    <release>${latest}</release>\n    <versions>\n${versionLines}\n    </versions>\n    <lastUpdated>${lastUpdated}</lastUpdated>\n  </versioning>\n</metadata>\n`;
+  return `<?xml version="1.0" encoding="UTF-8"?>\n<metadata>\n  <groupId>${CURRENT_GROUP_ID}</groupId>\n  <artifactId>${ARTIFACT_ID}</artifactId>\n  <versioning>\n    <latest>${latest}</latest>\n    <release>${latest}</release>\n    <versions>\n${versionLines}\n    </versions>\n    <lastUpdated>${lastUpdated}</lastUpdated>\n  </versioning>\n</metadata>\n`;
 }
 
 function recoverExplicitly() {
@@ -479,12 +494,15 @@ function prepare() {
   );
   runCurrentReleaseCheck();
 
-  const metadata = readFileSync(METADATA_FILE, "utf8");
-  const existingVersions = metadataVersions(metadata).sort(compareVersions);
-  assert(
-    compareVersions(targetVersion, existingVersions.at(-1)) > 0,
-    `目标版本 ${targetVersion} 必须高于 Maven 最高版本`,
-  );
+  const existingVersions = existsSync(METADATA_FILE)
+    ? metadataVersions(readFileSync(METADATA_FILE, "utf8")).sort(compareVersions)
+    : [];
+  if (existingVersions.length > 0) {
+    assert(
+      compareVersions(targetVersion, existingVersions.at(-1)) > 0,
+      `目标版本 ${targetVersion} 必须高于 Maven 最高版本`,
+    );
+  }
 
   runGradle(
     `-PcyberPowerReleaseVersion=${targetVersion}`,
@@ -504,7 +522,10 @@ function prepare() {
   const stagedDescriptorJson = readJson(stagedDescriptor);
   assert(
     stagedDescriptorJson.version === targetVersion &&
-      stagedDescriptorJson.javaDependencies?.[0]?.version === targetVersion,
+      stagedDescriptorJson.javaDependencies?.length === 1 &&
+      stagedDescriptorJson.javaDependencies[0].groupId === CURRENT_GROUP_ID &&
+      stagedDescriptorJson.javaDependencies[0].artifactId === ARTIFACT_ID &&
+      stagedDescriptorJson.javaDependencies[0].version === targetVersion,
     `候选 descriptor 不是 ${targetVersion}`,
   );
   assert(
@@ -512,7 +533,9 @@ function prepare() {
     `候选构建期间 ${targetVersion} 已被其他操作创建；拒绝继续`,
   );
 
-  const snapshots = new Map(snapshotPaths().map((path) => [path, readFileSync(path)]));
+  const snapshots = new Map(
+    snapshotPaths().map((path) => [path, existsSync(path) ? readFileSync(path) : null]),
+  );
   writeJournal(snapshots);
   ownsJournal = true;
 
@@ -522,6 +545,7 @@ function prepare() {
   writeJson(PACKAGE_FILE, packageJson);
   copyFileSync(stagedDescriptor, DESCRIPTOR_FILE);
 
+  mkdirSync(ARTIFACT_ROOT, { recursive: true });
   const artifactTemporary = temporaryArtifactDirectory(targetVersion, transactionToken);
   cpSync(stagedArtifactDirectory, artifactTemporary, { recursive: true, errorOnExist: true });
   renameSync(artifactTemporary, artifactDirectory(targetVersion));
@@ -539,7 +563,7 @@ function prepare() {
   copyFileSync(DESCRIPTOR_FILE, join(mirrorTemporary, "CyberPower.json"));
   copyFileSync(
     artifactJar(targetVersion),
-    join(mirrorTemporary, `cyberpower-java-${targetVersion}.jar`),
+    join(mirrorTemporary, `${ARTIFACT_ID}-${targetVersion}.jar`),
   );
   renameSync(mirrorTemporary, mirrorDirectory(targetVersion));
 

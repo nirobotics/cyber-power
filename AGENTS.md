@@ -3,14 +3,14 @@
 ## 入口规则
 
 - 通用沟通、修改和最终汇报规则使用本机全局 `~/.codex/AGENTS.md`；本文件只保留仓库级规则。
-- 本项目遵循 `.agents/skills/cyber-apps/SKILL.md`、`.agents/skills/ni-github-repo/SKILL.md` 和 `.agents/skills/ni-memory/SKILL.md`。
+- 本项目遵循 `.agents/skills/ni-github-repo/SKILL.md` 和 `.agents/skills/ni-memory/SKILL.md`。
 - 仓库名 `cyber-power` 是经用户批准的 `ni-github-repo` 命名例外；保留现名，不得为了下划线规范擅自重命名。
-- 飞书密钥、Supabase service role key、Vercel token 及其他敏感信息只能在服务端环境变量中使用，不得写入仓库、前端 bundle、日志或交接内容。
+- Vercel token 及其他敏感信息不得写入仓库、前端 bundle、日志或交接内容。
 
 ## 项目边界
 
 - Cyber Power 面向任何正确使用 NI EnergyLogger 的 FRC 队伍；不得把解析兼容性硬编码为仅支持 8214 或 9635。
-- Supabase 只用于飞书登录身份映射和认证所需数据，不用于保存 `.wpilog`、能量分析结果或其他业务数据。
+- Web 应用完全匿名使用，不增加登录、账户、权限或服务端日志存储。
 - 应用优先部署到 NI Corporate Vercel；生产入口为 `power.team8214.com`，Vercel 项目就绪后由用户协助完成域名绑定和 DNS。
 
 ## Memory

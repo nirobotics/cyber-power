@@ -18,12 +18,10 @@ describe("analysis workspace page title", () => {
     expect(analysisWorkspacePageTitle(true)).toBeNull();
   });
 
-  it("keeps identity out of the cached loader shell without coupling upload readiness to auth", () => {
-    expect(appLayoutSource).toContain("await requireCurrentUser(request)");
-    expect(appLayoutSource).toContain("return { authenticated: true }");
-    expect(appLayoutSource).toContain("const auth = useAuth()");
-    expect(appLayoutSource).not.toContain("toPublicUser");
-    expect(appLayoutSource).not.toContain("AnalysisWorkspaceReadyContext");
+  it("keeps the analysis workspace publicly accessible", () => {
+    expect(appLayoutSource).not.toContain("requireCurrentUser");
+    expect(appLayoutSource).not.toContain("useAuth");
+    expect(appLayoutSource).not.toContain("authenticated");
   });
 
   it("omits the File input during SSR and enables it after the client mount gate opens", () => {

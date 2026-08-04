@@ -2,17 +2,19 @@ import { timingSafeEqual } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import {
-  ARTIFACT_RELATIVE_ROOT,
-  ARTIFACT_ROOT,
+  ARTIFACT_ID,
   CHECKSUM_ALGORITHMS,
   DESCRIPTOR_FILE,
   IMMUTABLE_MANIFEST_FILE,
-  METADATA_FILE,
+  LEGACY_GROUP_ID,
+  MAVEN_ROOT,
   MIRROR_ROOT,
   PACKAGE_FILE,
+  PUBLISHED_GROUP_IDS,
   ROOT,
   VERSION_PATTERN,
   artifactJar,
+  artifactRelativeRoot,
   assert,
   assertRegularFile,
   compareVersions,
@@ -39,6 +41,19 @@ const noGradle = argumentsWithoutSeparator.includes("--no-gradle");
 const explicitTag = argumentsWithoutSeparator
   .find((argument) => argument.startsWith("--tag="))
   ?.slice("--tag=".length);
+
+const LEGACY_METADATA_HASHES = Object.fromEntries(
+  [
+    ["", "3da2e36f921fed40a3510e9b257bf336ca54be9510a80266bbe7edcfa4118936"],
+    [".md5", "cfc9dcee9cc982505a94eacd85289c08dbd81b9e8b57279970dcdbd19655ab59"],
+    [".sha1", "41cb30a8fd31f1f4be7747dcd591a69aa663872e70f7865d15fedee476f4f285"],
+    [".sha256", "7628ab51eb211ce90c97765f851c51530a8ab089656a08dc7a46a7f034b4c3b9"],
+    [".sha512", "f3095ec13dc73bbcd670abbd97dc664c9c5a1b90df04e999d0b4745a3ab88398"],
+  ].map(([suffix, hash]) => [
+    `${artifactRelativeRoot(LEGACY_GROUP_ID)}/maven-metadata.xml${suffix}`,
+    hash,
+  ]),
+);
 
 function equalFiles(left, right, description) {
   assertRegularFile(left, description);
@@ -71,11 +86,106 @@ function assertRecordedDirectory(root, records, description) {
   for (const relativePath of actualFiles) {
     const absolutePath = join(root, ...relativePath.split("/"));
     const actualHash = hashFile(absolutePath);
+    assert(records[relativePath] === actualHash, `${description} 已被修改：${relativePath}`);
+  }
+}
+
+function expectedVersionFiles(version) {
+  const primaryFiles = [
+    `${ARTIFACT_ID}-${version}.jar`,
+    `${ARTIFACT_ID}-${version}-sources.jar`,
+    `${ARTIFACT_ID}-${version}-javadoc.jar`,
+    `${ARTIFACT_ID}-${version}.pom`,
+    `${ARTIFACT_ID}-${version}.module`,
+  ];
+  return primaryFiles
+    .flatMap((file) => [file, ...CHECKSUM_ALGORITHMS.map((algorithm) => `${file}.${algorithm}`)])
+    .sort();
+}
+
+function validateMavenCoordinate(groupId, immutableManifest, descriptorGroupId, productVersion) {
+  const relativeRoot = artifactRelativeRoot(groupId);
+  const artifactRoot = join(MAVEN_ROOT, ...relativeRoot.split("/"));
+  const recordedPaths = Object.keys(immutableManifest.artifacts).filter((path) =>
+    path.startsWith(`${relativeRoot}/`),
+  );
+  const actualFiles = listFiles(artifactRoot);
+  if (recordedPaths.length === 0 && actualFiles.length === 0) return false;
+
+  const metadataFile = join(artifactRoot, "maven-metadata.xml");
+  assertRegularFile(metadataFile, `${groupId} Maven metadata`);
+  assertChecksumSet(metadataFile);
+  const metadata = readFileSync(metadataFile, "utf8");
+  assert(metadataValue(metadata, "groupId") === groupId, `${groupId} Maven metadata groupId 无效`);
+  assert(
+    metadataValue(metadata, "artifactId") === ARTIFACT_ID,
+    `${groupId} Maven metadata artifactId 无效`,
+  );
+
+  const versions = metadataVersions(metadata);
+  assert(versions.length > 0, `${groupId} Maven metadata 没有版本`);
+  assert(new Set(versions).size === versions.length, `${groupId} Maven metadata 含重复版本`);
+  assert(
+    versions.every((item) => VERSION_PATTERN.test(item)),
+    `${groupId} Maven metadata 含无效版本`,
+  );
+  const sortedVersions = [...versions].sort(compareVersions);
+  assert(
+    JSON.stringify(versions) === JSON.stringify(sortedVersions),
+    `${groupId} Maven metadata 版本没有按升序排列`,
+  );
+
+  const actualVersions = [
+    ...new Set(actualFiles.filter((path) => path.includes("/")).map((path) => path.split("/")[0])),
+  ].sort(compareVersions);
+  const recordedVersions = [
+    ...new Set(
+      recordedPaths.map((path) => {
+        const versionAndFile = path.slice(`${relativeRoot}/`.length);
+        const separator = versionAndFile.indexOf("/");
+        assert(
+          separator > 0 && separator === versionAndFile.lastIndexOf("/"),
+          `不可变 Maven 路径无效：${path}`,
+        );
+        const recordedVersion = versionAndFile.slice(0, separator);
+        assert(VERSION_PATTERN.test(recordedVersion), `不可变 Maven 版本无效：${path}`);
+        return recordedVersion;
+      }),
+    ),
+  ].sort(compareVersions);
+  assert(
+    JSON.stringify(sortedVersions) === JSON.stringify(actualVersions) &&
+      JSON.stringify(sortedVersions) === JSON.stringify(recordedVersions),
+    `${groupId} Maven metadata、目录与不可变清单的版本集合不一致`,
+  );
+
+  const highestVersion = sortedVersions.at(-1);
+  assert(
+    metadataValue(metadata, "latest") === highestVersion &&
+      metadataValue(metadata, "release") === highestVersion,
+    `${groupId} Maven latest/release 不是最高版本 ${highestVersion}`,
+  );
+  if (groupId === descriptorGroupId) {
     assert(
-      records[relativePath] === actualHash,
-      `${description} 已被修改：${relativePath}`,
+      highestVersion === productVersion,
+      `CyberPower.json 指向 ${productVersion}，但 ${groupId} 最高版本是 ${highestVersion}`,
     );
   }
+
+  for (const publishedVersion of sortedVersions) {
+    const versionDirectory = join(artifactRoot, publishedVersion);
+    assert(
+      JSON.stringify(listFiles(versionDirectory)) ===
+        JSON.stringify(expectedVersionFiles(publishedVersion)),
+      `${groupId}:${ARTIFACT_ID}:${publishedVersion} Maven 文件集合无效`,
+    );
+    for (const relativePath of listFiles(versionDirectory)) {
+      if (!CHECKSUM_ALGORITHMS.some((algorithm) => relativePath.endsWith(`.${algorithm}`))) {
+        assertChecksumSet(join(versionDirectory, relativePath));
+      }
+    }
+  }
+  return true;
 }
 
 function validate() {
@@ -85,52 +195,13 @@ function validate() {
 
   const descriptor = readJson(DESCRIPTOR_FILE);
   assert(descriptor.version === version, `CyberPower.json 顶层版本不是 ${version}`);
+  const descriptorDependency = descriptor.javaDependencies?.[0];
   assert(
     descriptor.javaDependencies?.length === 1 &&
-      descriptor.javaDependencies[0].groupId === "com.nextinnovation.cyberpower" &&
-      descriptor.javaDependencies[0].artifactId === "cyberpower-java" &&
-      descriptor.javaDependencies[0].version === version,
+      PUBLISHED_GROUP_IDS.includes(descriptorDependency.groupId) &&
+      descriptorDependency.artifactId === ARTIFACT_ID &&
+      descriptorDependency.version === version,
     "CyberPower.json Java 坐标与 VERSION 不一致",
-  );
-
-  assertRegularFile(METADATA_FILE, "Maven metadata");
-  assertChecksumSet(METADATA_FILE);
-  const metadata = readFileSync(METADATA_FILE, "utf8");
-  assert(
-    metadataValue(metadata, "groupId") === "com.nextinnovation.cyberpower",
-    "Maven metadata groupId 无效",
-  );
-  assert(metadataValue(metadata, "artifactId") === "cyberpower-java", "Maven metadata artifactId 无效");
-  const versions = metadataVersions(metadata);
-  assert(versions.length > 0, "Maven metadata 没有版本");
-  assert(new Set(versions).size === versions.length, "Maven metadata 含重复版本");
-  assert(versions.every((item) => VERSION_PATTERN.test(item)), "Maven metadata 含无效版本");
-  const sortedVersions = [...versions].sort(compareVersions);
-  assert(
-    JSON.stringify(versions) === JSON.stringify(sortedVersions),
-    "Maven metadata 版本没有按升序排列",
-  );
-  const highestVersion = sortedVersions.at(-1);
-  assert(highestVersion === version, `VERSION ${version} 不是 Maven 最高版本 ${highestVersion}`);
-  assert(metadataValue(metadata, "latest") === version, "Maven latest 与 VERSION 不一致");
-  assert(metadataValue(metadata, "release") === version, "Maven release 与 VERSION 不一致");
-
-  for (const publishedVersion of sortedVersions) {
-    const versionDirectory = join(ARTIFACT_ROOT, publishedVersion);
-    for (const relativePath of listFiles(versionDirectory)) {
-      if (!CHECKSUM_ALGORITHMS.some((algorithm) => relativePath.endsWith(`.${algorithm}`))) {
-        assertChecksumSet(join(versionDirectory, relativePath));
-      }
-    }
-  }
-
-  const versionDirectories = Object.keys(readJson(IMMUTABLE_MANIFEST_FILE).artifacts ?? {})
-    .map((path) => path.slice(`${ARTIFACT_RELATIVE_ROOT}/`.length).split("/")[0])
-    .filter(Boolean);
-  assert(
-    JSON.stringify([...new Set(versionDirectories)].sort(compareVersions)) ===
-      JSON.stringify(sortedVersions),
-    "不可变 Maven 清单中的版本集合与 metadata 不一致",
   );
 
   const immutableManifest = readJson(IMMUTABLE_MANIFEST_FILE);
@@ -139,33 +210,35 @@ function validate() {
     immutableManifest.artifacts && typeof immutableManifest.artifacts === "object",
     "不可变清单缺少 artifacts",
   );
-  const mavenVersionFiles = listFiles(ARTIFACT_ROOT).filter(
-    (path) => !path.startsWith("maven-metadata.xml"),
+  assert(
+    Object.keys(immutableManifest.artifacts).every((path) =>
+      PUBLISHED_GROUP_IDS.some((groupId) =>
+        path.startsWith(`${artifactRelativeRoot(groupId)}/`),
+      ),
+    ),
+    "不可变 Maven 清单含未知坐标",
   );
-  const expectedMavenRecords = Object.fromEntries(
-    mavenVersionFiles.map((path) => [
-      `${ARTIFACT_RELATIVE_ROOT}/${path}`,
-      immutableManifest.artifacts[`${ARTIFACT_RELATIVE_ROOT}/${path}`],
-    ]),
+  const presentGroups = PUBLISHED_GROUP_IDS.filter((groupId) =>
+    validateMavenCoordinate(groupId, immutableManifest, descriptorDependency.groupId, version),
   );
   assert(
-    Object.values(expectedMavenRecords).every(Boolean) &&
-      Object.keys(immutableManifest.artifacts).length === mavenVersionFiles.length,
-    "不可变 Maven 清单存在漏项或多余项",
+    presentGroups.includes(descriptorDependency.groupId),
+    "CyberPower.json 指向的 Maven 坐标不存在",
   );
-  assertRecordedDirectory(
-    ARTIFACT_ROOT,
-    Object.fromEntries([
-      ...Object.entries(expectedMavenRecords).map(([path, hash]) => [
-        path.slice(`${ARTIFACT_RELATIVE_ROOT}/`.length),
-        hash,
-      ]),
-      ...listFiles(ARTIFACT_ROOT)
-        .filter((path) => path.startsWith("maven-metadata.xml"))
-        .map((path) => [path, hashFile(join(ARTIFACT_ROOT, path))]),
-    ]),
-    "Maven 仓库",
-  );
+
+  const expectedMavenRecords = {
+    ...immutableManifest.artifacts,
+    ...LEGACY_METADATA_HASHES,
+  };
+  for (const groupId of presentGroups) {
+    if (groupId === LEGACY_GROUP_ID) continue;
+    const relativeMetadata = `${artifactRelativeRoot(groupId)}/maven-metadata.xml`;
+    for (const suffix of ["", ...CHECKSUM_ALGORITHMS.map((algorithm) => `.${algorithm}`)]) {
+      const relativePath = `${relativeMetadata}${suffix}`;
+      expectedMavenRecords[relativePath] = hashFile(join(MAVEN_ROOT, ...relativePath.split("/")));
+    }
+  }
+  assertRecordedDirectory(MAVEN_ROOT, expectedMavenRecords, "Maven 仓库");
 
   const releaseMirrors = immutableManifest.releaseMirrors;
   assert(releaseMirrors && typeof releaseMirrors === "object", "不可变清单缺少 releaseMirrors");
@@ -176,23 +249,24 @@ function validate() {
     .filter((item, index, array) => array.indexOf(item) === index)) {
     assert(VERSION_PATTERN.test(mirrorVersion), `离线镜像版本无效：${mirrorVersion}`);
     const directory = join(MIRROR_ROOT, mirrorVersion);
-    const expectedFiles = [
-      "CyberPower.json",
-      `cyberpower-java-${mirrorVersion}.jar`,
-    ];
+    const expectedFiles = ["CyberPower.json", `${ARTIFACT_ID}-${mirrorVersion}.jar`];
     assert(
       JSON.stringify(listFiles(directory)) === JSON.stringify(expectedFiles),
       `离线镜像 ${mirrorVersion} 必须且只能包含 descriptor 与 runtime JAR`,
     );
     const mirrorDescriptor = readJson(join(directory, "CyberPower.json"));
+    const mirrorDependency = mirrorDescriptor.javaDependencies?.[0];
     assert(
       mirrorDescriptor.version === mirrorVersion &&
-        mirrorDescriptor.javaDependencies?.[0]?.version === mirrorVersion,
+        mirrorDescriptor.javaDependencies?.length === 1 &&
+        PUBLISHED_GROUP_IDS.includes(mirrorDependency.groupId) &&
+        mirrorDependency.artifactId === ARTIFACT_ID &&
+        mirrorDependency.version === mirrorVersion,
       `离线镜像 ${mirrorVersion} descriptor 版本无效`,
     );
     equalFiles(
-      artifactJar(mirrorVersion),
-      join(directory, `cyberpower-java-${mirrorVersion}.jar`),
+      artifactJar(mirrorVersion, mirrorDependency.groupId),
+      join(directory, `${ARTIFACT_ID}-${mirrorVersion}.jar`),
       `离线镜像 ${mirrorVersion} runtime JAR`,
     );
   }
@@ -204,8 +278,8 @@ function validate() {
     `当前 ${version} descriptor 镜像`,
   );
   equalFiles(
-    artifactJar(version),
-    join(currentMirror, `cyberpower-java-${version}.jar`),
+    artifactJar(version, descriptorDependency.groupId),
+    join(currentMirror, `${ARTIFACT_ID}-${version}.jar`),
     `当前 ${version} runtime JAR 镜像`,
   );
 

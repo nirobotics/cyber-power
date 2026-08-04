@@ -100,12 +100,39 @@
     "com/nextinnovation/cyberpower/cyberpower-java/2026.2.3/cyberpower-java-2026.2.3.pom.md5": "295e74b645529ff5dd57d2cb751be8f488debe297008f28e1f8bb1aac895d8a4",
     "com/nextinnovation/cyberpower/cyberpower-java/2026.2.3/cyberpower-java-2026.2.3.pom.sha1": "5006ec3a034b3d24e4cb133a15637afa5965490960416b443c521aaf6e7aeffe",
     "com/nextinnovation/cyberpower/cyberpower-java/2026.2.3/cyberpower-java-2026.2.3.pom.sha256": "908270e46d58adb0125a161746793bb8c2e51ef5b6257315a9d814ca42a58036",
-    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.3/cyberpower-java-2026.2.3.pom.sha512": "87896f9784cf39873789ebad86aa32c36fc5a8b14fad8bfb31a48fb2ed0dd541"
+    "com/nextinnovation/cyberpower/cyberpower-java/2026.2.3/cyberpower-java-2026.2.3.pom.sha512": "87896f9784cf39873789ebad86aa32c36fc5a8b14fad8bfb31a48fb2ed0dd541",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-javadoc.jar": "66e1ed349514b922b3f4fcee84ebef4a0a82a3eee114e3fc2753c5c61371c9c1",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-javadoc.jar.md5": "12347dbeca1d2abae232abcdae0c016e3be0ffb4d066596b843a23f70a156995",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-javadoc.jar.sha1": "27f740d337d108ed5ac60039166495c3a5bcfcbfe2c5cba5236398a0f5144f9c",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-javadoc.jar.sha256": "a5a0f2ef8e6bbe7a7b826dc51ddd4ebe43766d910d1564657113eeb1113acb09",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-javadoc.jar.sha512": "9fd3e7f8b7635cb75e18a772b90fcbd82369a265295e3b6d23c924b0522820cd",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-sources.jar": "ace1c534597ba0c65272ff934911cc05c6e89bf23821f1c138c63a080e02bbe8",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-sources.jar.md5": "bc06bb45c617f2a1671914cc972cc9017401ea38bc3090bbcaccbda85e0d6308",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-sources.jar.sha1": "c480cdcfea304e5131d3ad75bd4e341dd2b063d3d70f09a296cd8e3017f2dff7",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-sources.jar.sha256": "bbbef2eecc19cd7f9ad0a40bc88cd8447764d1011c3dcf084bb8217e2b3044ab",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0-sources.jar.sha512": "6e75a387137769105edb6bb67f10264493a3186fb61514fb5d14f506ac8affa5",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.jar": "779a2e5643a26a4135bcfab6bb4f8655bd3342733f939e474a13accfa6f63e20",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.jar.md5": "9c4f2203bf2cb5f11fec258257a256e67fbb4faba17901dcc51e28ffd2eb5f6a",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.jar.sha1": "bd76d45d417965099d086222ecd2fb3cc19e840f24e54fd6d1da4e7c440fd6a0",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.jar.sha256": "e89b18827319b57fbf9eac0378f572d3a4ff44991ed77644dcc3d146be3822bb",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.jar.sha512": "c49f4bec9bc56dd086b6b5538744af0e993147320ed9cde8811bf28b753256b0",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.module": "c8c9af7ac0c0cb054ebe0783e22737a2dfdf010d9116c7243fd8a5b58e9aa22e",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.module.md5": "fa15a2a5f41d1a2299364572e94c1d8288e050502c4df19ac5a1236123cb35af",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.module.sha1": "b401a703f8288e18ab51711a55da5c766bd7ebfbc99b6eb845249d9b7fbbbcbe",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.module.sha256": "95381d0541f9cbee1d8e25e49b30b5cf4c6c4b52528a077a837b93db355c049d",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.module.sha512": "42ddfabed391a70d8c3d0c4bbea76e51535525fb367061648cd4f7df42765471",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.pom": "2fdbbd69bd3d2dfd4de1fa3df453c9ddc1315298cac5414987733ab461da6c6d",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.pom.md5": "5304972a589de3e7d84feec1ea4428a04ef225b64031713553d0eeefdde1c61c",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.pom.sha1": "bec69e1aee404153f5bd880da0731a65049d79ebf8e2d2a617381c39de643b26",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.pom.sha256": "2d7072b211435e69fa3ef4a1f5b61bf0c7d46d4aa4cc39d665c9da71cb99821a",
+    "com/team8214/cyberpower/cyberpower-java/2026.3.0/cyberpower-java-2026.3.0.pom.sha512": "6842194e255256b17c94bdf32e0e8f6e9fc23ce49e3b4d7ffe6c0bc87178d13d"
   },
   "releaseMirrors": {
     "2026.2.2/cyberpower-java-2026.2.2.jar": "8abddc75f41d4323db27aecf7b806a677193cb0d9d106c2bdb177f6b8d67a02a",
     "2026.2.2/CyberPower.json": "072dfd36725d1444bf4c1789a3b22c0ff0ccfede8c1e12cbab697dff6d29448f",
     "2026.2.3/cyberpower-java-2026.2.3.jar": "71d9d93c8293e18dd61468be01762d722f9cd92635d4ffed3eb173f1f40fd48c",
-    "2026.2.3/CyberPower.json": "576193362716342a25daac4f4fde33d7e8300f98d9ac386b0478c97b70fed835"
+    "2026.2.3/CyberPower.json": "576193362716342a25daac4f4fde33d7e8300f98d9ac386b0478c97b70fed835",
+    "2026.3.0/cyberpower-java-2026.3.0.jar": "779a2e5643a26a4135bcfab6bb4f8655bd3342733f939e474a13accfa6f63e20",
+    "2026.3.0/CyberPower.json": "12615f2b0b4ddc16b3ca95c3d34f6a898b9fe6134ff868323f252e6767fa55c4"
   }
 }
