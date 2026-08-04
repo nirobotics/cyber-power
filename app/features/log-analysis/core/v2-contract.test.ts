@@ -35,7 +35,7 @@ function errorCodes(error: unknown): string[] {
 }
 
 describe("EnergyLogger V2 contracts", () => {
-  it.each(["2.1", "2.2", "2.3"] as const)(
+  it.each(["2.1", "2.2", "2.3", "2.4"] as const)(
     "accepts %s with only the minimal fixed manifest and preserves analysisReduction",
     (contractVersion) => {
       const contract = parseEnergyLoggerV2Contract({
@@ -55,7 +55,7 @@ describe("EnergyLogger V2 contracts", () => {
     },
   );
 
-  it.each(["2.0", "2.4"])("rejects unsupported version %s", (contractVersion) => {
+  it.each(["2.0", "2.5"])("rejects unsupported version %s", (contractVersion) => {
     expect(() => {
       parseEnergyLoggerV2Contract({
         contractVersion,
@@ -104,6 +104,52 @@ describe("EnergyLogger V2 contracts", () => {
       throw new Error("expected contract rejection");
     } catch (error) {
       expect(errorCodes(error)).toContain("V2_MANIFEST_INVALID_LEADER");
+    }
+  });
+
+  it("accepts a homogeneous supply-only group only in V2.4", () => {
+    const supplyOnly = manifest();
+    supplyOnly.subsystems[0].motors[0].type = null as never;
+    supplyOnly.subsystems[0].motors[0].analysisReduction = null as never;
+    supplyOnly.subsystems[0].motors[1].type = null as never;
+    supplyOnly.subsystems[0].motors[1].analysisReduction = null as never;
+
+    const contract = parseEnergyLoggerV2Contract({
+      contractVersion: "2.4",
+      libraryVersion: "2026.4.0",
+      manifest: supplyOnly,
+    });
+    expect(contract.manifest.subsystems[0].motors[0]).toMatchObject({
+      type: null,
+      analysisReduction: null,
+    });
+    expect(() => parseEnergyLoggerV2Contract({
+      contractVersion: "2.3",
+      libraryVersion: "2026.3.0",
+      manifest: supplyOnly,
+    })).toThrowError(EnergyLoggerV2ContractError);
+  });
+
+  it("rejects half-null and unknown V2.4 motor descriptors", () => {
+    const halfNull = manifest();
+    halfNull.subsystems[0].motors[0].type = null as never;
+    expect(() => parseEnergyLoggerV2Contract({
+      contractVersion: "2.4",
+      libraryVersion: "2026.4.0",
+      manifest: halfNull,
+    })).toThrowError(EnergyLoggerV2ContractError);
+
+    const unknown = manifest();
+    unknown.subsystems[0].motors[0].type = "UNKNOWN" as never;
+    try {
+      parseEnergyLoggerV2Contract({
+        contractVersion: "2.4",
+        libraryVersion: "2026.4.0",
+        manifest: unknown,
+      });
+      throw new Error("expected contract rejection");
+    } catch (error) {
+      expect(errorCodes(error)).toContain("V2_MANIFEST_UNKNOWN_MOTOR_TYPE");
     }
   });
 });

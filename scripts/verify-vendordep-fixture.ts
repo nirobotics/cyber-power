@@ -3,6 +3,8 @@ import { resolve } from "node:path";
 import {
   analyzeEnergyRange,
   analyzeEnergyLoggerV2Range,
+  deriveEnergyLoggerV2MotorGroupElectricalSeries,
+  estimateSupplyCurrentLimits,
   parseEnergyLog,
 } from "../app/features/log-analysis/core/index";
 
@@ -16,9 +18,11 @@ const fixturePath = resolve(
 const bytes = await readFile(fixturePath);
 const dataset = await parseEnergyLog(bytes);
 
-invariant(dataset.sourceContract === "v2", "fixture did not select the EnergyLogger 2.3 parser");
-invariant(dataset.v2, "fixture has no validated EnergyLogger 2.3 dataset");
-invariant(dataset.v2.contract.contractVersion === "2.3", "contractVersion is not exactly 2.3");
+invariant(dataset.sourceContract === "v2", "fixture did not select the EnergyLogger 2.4 parser");
+invariant(dataset.v2, "fixture has no validated EnergyLogger 2.4 dataset");
+invariant(dataset.v2.contract.contractVersion === "2.4", "contractVersion is not exactly 2.4");
+invariant(dataset.robotCurrentSource === "robot-total", "fixture did not select robot total current");
+invariant(dataset.v2.robotTotalSupplyCurrentAmps, "fixture has no robot total current series");
 invariant(Object.keys(dataset.v2.contract.manifest).join(",") === "subsystems", "manifest has extra top-level fields");
 invariant(dataset.v2.subsystems.length > 0, "manifest contains no subsystems");
 
@@ -37,17 +41,24 @@ for (const [subsystemIndex, subsystem] of dataset.v2.subsystems.entries()) {
       Object.keys(motor).sort().join(",") === "analysisReduction,leader,name,type",
       `${subsystem.id}/${motor.name} descriptor has extra fields`,
     );
+    const supplyOnly = motor.type === null;
     invariant(
-      Number.isFinite(motor.analysisReduction) && motor.analysisReduction > 0,
-      `${subsystem.id}/${motor.name} analysisReduction is invalid`,
+      supplyOnly === (motor.analysisReduction === null),
+      `${subsystem.id}/${motor.name} type and analysisReduction nullability differ`,
     );
-    if (motor.leader === null) continue;
+    if (!supplyOnly) {
+      invariant(
+        Number.isFinite(motor.analysisReduction) && motor.analysisReduction! > 0,
+        `${subsystem.id}/${motor.name} analysisReduction is invalid`,
+      );
+    }
+    if (motor.leader === null && !supplyOnly) continue;
     for (let row = 0; row < subsystem.motorSamples.timestampsUs.length; row += 1) {
       const offset = row * subsystem.motorSamples.width + motorIndex * 3;
       invariant(
         Number.isNaN(subsystem.motorSamples.values[offset + 1]) &&
           Number.isNaN(subsystem.motorSamples.values[offset + 2]),
-        `${subsystem.id}/${motor.name} follower must contain NaN Stator/rotor slots`,
+        `${subsystem.id}/${motor.name} follower or supply-only motor must contain NaN Stator/rotor slots`,
       );
     }
   }
@@ -65,14 +76,32 @@ for (let index = 0; index < dataset.series.totalPowerW.values.length; index += 1
 }
 
 const advanced = analyzeEnergyLoggerV2Range(dataset);
-invariant(advanced, "fixture did not produce EnergyLogger 2.3 advanced analysis");
+invariant(advanced, "fixture did not produce EnergyLogger 2.4 advanced analysis");
 invariant(
   advanced.subsystems.every((subsystem) => subsystem.states.length > 0),
   "fixture did not produce per-state power statistics",
 );
 invariant(
   advanced.subsystems.every((subsystem) => subsystem.motorGroups.length > 0),
-  "fixture did not produce homogeneous leader groups",
+  "fixture did not produce leader groups",
+);
+const supplyOnlyGroup = advanced.subsystems
+  .flatMap((subsystem) => subsystem.motorGroups)
+  .find((group) => !group.analysisAvailable);
+invariant(
+  supplyOnlyGroup?.unavailableReason === "SUPPLY_ONLY",
+  "fixture supply-only group did not disable advanced analysis",
+);
+const supplyOnlyElectrical = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)?.find(
+  (group) => group.id === supplyOnlyGroup.id,
+);
+invariant(supplyOnlyElectrical, "fixture supply-only group has no electrical series");
+const limitEstimate = estimateSupplyCurrentLimits(dataset, {
+  limits: [{ motorGroupId: supplyOnlyGroup.id, limitA: 5 }],
+});
+invariant(
+  limitEstimate.targets[0]?.motorType === null,
+  "fixture supply-only group was not accepted by limit replay",
 );
 invariant(
   analyzeEnergyRange(dataset).quality.reconciliation.withinTolerance,

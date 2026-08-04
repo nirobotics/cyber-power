@@ -23,6 +23,10 @@ type AvailableLocalWindows = Extract<BatteryLoadLocalWindows, { status: "availab
 
 const RAW_OBSERVED_POINT_LIMIT = 2_000;
 
+function currentScope(dataset: EnergyLogDataset): "整机" | "已注册电机" {
+  return dataset.robotCurrentSource === "registered-motors" ? "已注册电机" : "整机";
+}
+
 const CHART_THEME = {
   dark: {
     text: "#d7dfeb",
@@ -61,14 +65,16 @@ export function BatteryAnalysisSection({
     return (
       <section className="card px-4 py-8 text-center">
         <p className="text-sm font-semibold text-ink">电池观测分析不可用</p>
-        <p className="mt-1 text-xs text-ink-dim">{topLevelUnavailableReason(analysis.reason)}</p>
+        <p className="mt-1 text-xs text-ink-dim">
+          {topLevelUnavailableReason(analysis.reason, currentScope(dataset))}
+        </p>
       </section>
     );
   }
 
   return (
     <div className="grid gap-2.5">
-      <SummarySection analysis={analysis} />
+      <SummarySection analysis={analysis} scope={currentScope(dataset)} />
       <LocalVoltageResponseSection
         analysis={analysis}
         dataset={dataset}
@@ -80,6 +86,7 @@ export function BatteryAnalysisSection({
       />
       <ObservedDistributionCard
         curve={analysis.observedCurve}
+        scope={currentScope(dataset)}
         brownoutThresholdV={analysis.lowVoltage.status === "available"
           ? analysis.lowVoltage.averageThresholdV
           : null}
@@ -91,14 +98,16 @@ export function BatteryAnalysisSection({
 
 const SummarySection = memo(function SummarySection({
   analysis,
+  scope,
 }: {
   analysis: Extract<BatteryLoadResponseAnalysis, { status: "available" }>;
+  scope: "整机" | "已注册电机";
 }) {
   const { summary, quality } = analysis;
   return (
     <section className="card overflow-hidden">
       <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold text-ink">电池与整机输入摘要</h2>
+        <h2 className="text-sm font-semibold text-ink">电池与{scope}输入摘要</h2>
       </div>
       <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-7">
         <SummaryMetric label="平均电池电压" value={`${formatNumber(summary.averageVoltageV, 2)} V`} />
@@ -107,19 +116,19 @@ const SummarySection = memo(function SummarySection({
           value={`${formatNumber(summary.minimumVoltageV, 2)}–${formatNumber(summary.maximumVoltageV, 2)} V`}
         />
         <SummaryMetric
-          label="整机正向输入能量"
+          label={`${scope}正向输入能量`}
           value={`${formatNumber(summary.positiveRegisteredInputEnergyWh, 4)} Wh`}
         />
         <SummaryMetric
-          label="整机正向输入电量"
+          label={`${scope}正向输入电量`}
           value={`${formatNumber(summary.positiveRegisteredChargeAh, 4)} Ah`}
         />
         <SummaryMetric
-          label="整机峰值正向电流"
+          label={`${scope}峰值正向电流`}
           value={`${formatNumber(summary.maximumPositiveRegisteredCurrentA, 1)} A`}
         />
         <SummaryMetric
-          label="整机电流 I²t"
+          label={`${scope}电流 I²t`}
           value={`${formatNumber(summary.registeredCurrentSquaredTimeA2Seconds, 1)} A²·s`}
         />
         <SummaryMetric
@@ -175,7 +184,12 @@ function LocalVoltageResponseSection({
   return (
     <section className="card overflow-hidden">
       <div className="border-b border-line px-4 py-3">
-        <h2 className="text-sm font-semibold text-ink">局部电压响应</h2>
+        <h2 className="text-sm font-semibold text-ink">
+          {currentScope(dataset)}负载的局部电压响应
+        </h2>
+        <p className="mt-0.5 text-[11px] text-ink-faint">
+          只表示{currentScope(dataset)}负载下的局部等效压降，不是纯电池内阻或 SOC。
+        </p>
       </div>
       {windows.status === "available" && option ? (
         <div className="grid gap-3 px-4 py-3">
@@ -232,7 +246,7 @@ function LocalVoltageResponseSection({
         </div>
       ) : windows.status === "unavailable" ? (
         <UnavailableBlock
-          message={componentUnavailableReason(windows.reason)}
+          message={componentUnavailableReason(windows.reason, currentScope(dataset))}
           detail={`已评估 ${formatNumber(windows.evaluatedWindowCount, 0)} 个窗口；弱激励 ${formatNumber(windows.weakExcitationWindowCount, 0)} 个，方向不符合 ${formatNumber(windows.rejectedDirectionWindowCount, 0)} 个。`}
         />
       ) : null}
@@ -381,9 +395,11 @@ export function createLocalWindowTimelineOption(
 const ObservedDistributionCard = memo(function ObservedDistributionCard({
   curve,
   brownoutThresholdV,
+  scope,
 }: {
   curve: BatteryLoadObservedCurve;
   brownoutThresholdV: number | null;
+  scope: "整机" | "已注册电机";
 }) {
   const theme = useSyncExternalStore(subscribeTheme, getInitialTheme, getServerTheme);
   const [showRawPoints, setShowRawPoints] = useState(false);
@@ -395,8 +411,9 @@ const ObservedDistributionCard = memo(function ObservedDistributionCard({
       theme,
       brownoutThresholdV,
       showRawPoints,
+      `${scope}电流`,
     ),
-    [brownoutThresholdV, curve, distribution, showRawPoints, theme],
+    [brownoutThresholdV, curve, distribution, scope, showRawPoints, theme],
   );
   const hasData = distribution.bins.some((bin) => Number.isFinite(bin.voltageMedianV));
 
@@ -404,7 +421,9 @@ const ObservedDistributionCard = memo(function ObservedDistributionCard({
     <section className="card overflow-hidden">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-ink">整机电压与电流关系</h2>
+          <h2 className="text-sm font-semibold text-ink">
+            {scope === "整机" ? "整机电压与电流关系" : "电池电压与已注册电机电流关系"}
+          </h2>
           {hasData ? (
             <p className="mt-0.5 text-[11px] text-ink-faint">
               每 {formatNumber(distribution.binWidthA, 2)} A 一档 ·{
@@ -428,7 +447,7 @@ const ObservedDistributionCard = memo(function ObservedDistributionCard({
       </div>
       {hasData ? (
         <div className="px-4 py-3">
-          <div className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-ink-dim" aria-label="整机电压与电流图例">
+          <div className="mb-1.5 flex flex-wrap gap-x-4 gap-y-1 text-[10px] text-ink-dim" aria-label={scope === "整机" ? "整机电压与电流图例" : "电池电压与已注册电机电流图例"}>
             <span className="inline-flex items-center gap-1.5">
               <span className="h-2 w-2 rounded-full bg-[#9b7cff]" aria-hidden />
               取电中位数
@@ -455,11 +474,11 @@ const ObservedDistributionCard = memo(function ObservedDistributionCard({
           <StaticEChartsChart
             option={option}
             className="h-[410px] min-h-[380px]"
-            ariaLabel="整机电压与电流观测分布图"
+            ariaLabel={scope === "整机" ? "整机电压与电流观测分布图" : "电池电压与已注册电机电流观测分布图"}
           />
         </div>
       ) : (
-        <UnavailableBlock message="没有可绘制的完整整机电流与电池电压观测段。" />
+        <UnavailableBlock message={`没有可绘制的完整${scope}电流与电池电压观测段。`} />
       )}
     </section>
   );
@@ -471,6 +490,7 @@ export function createObservedVoltageCurrentDistributionOption(
   theme: ThemeMode,
   brownoutThresholdV: number | null,
   showRawPoints: boolean,
+  currentLabel = "整机电流",
 ): TimelineOption {
   const palette = CHART_THEME[theme];
   const positive = (bin: BatteryLoadObservedDistributionBin) => bin.currentMinimumA >= 0;
@@ -558,7 +578,7 @@ export function createObservedVoltageCurrentDistributionOption(
         const bin = typeof params.dataIndex === "number"
           ? distribution.bins[params.dataIndex]
           : undefined;
-        return bin ? formatObservedVoltageCurrentBinTooltip(bin) : "";
+        return bin ? formatObservedVoltageCurrentBinTooltip(bin, currentLabel) : "";
       },
     },
     grid: [
@@ -581,7 +601,7 @@ export function createObservedVoltageCurrentDistributionOption(
         gridIndex: 1,
         min: distribution.axisMinimumA,
         max: distribution.axisMaximumA,
-        name: "整机电流 (A)",
+        name: `${currentLabel} (A)`,
         nameLocation: "middle",
         nameGap: 28,
         nameTextStyle: { color: palette.text, fontSize: 10, fontWeight: 600 },
@@ -806,9 +826,10 @@ export function sampleObservedVoltageCurrentPoints(
 
 export function formatObservedVoltageCurrentBinTooltip(
   bin: BatteryLoadObservedDistributionBin,
+  currentLabel = "整机电流",
 ): string {
   return [
-    `<strong>整机电流 ${formatNumber(bin.currentMinimumA, 1)} 至 &lt; ${formatNumber(bin.currentMaximumA, 1)} A</strong>`,
+    `<strong>${currentLabel} ${formatNumber(bin.currentMinimumA, 1)} 至 &lt; ${formatNumber(bin.currentMaximumA, 1)} A</strong>`,
     `加权中位电压：${formatNumber(bin.voltageMedianV, 2)} V`,
     `P25–P75：${formatNumber(bin.voltageP25V, 2)}–${formatNumber(bin.voltageP75V, 2)} V`,
     `累计观测时长：${formatDuration(bin.observedDurationSeconds)}`,
@@ -875,22 +896,26 @@ function UnavailableBlock({ message, detail }: { message: string; detail?: strin
   );
 }
 
-export function topLevelUnavailableReason(reason: BatteryLoadResponseUnavailableReason): string {
+export function topLevelUnavailableReason(
+  reason: BatteryLoadResponseUnavailableReason,
+  scope: "整机" | "已注册电机" = "整机",
+): string {
   const labels: Readonly<Record<BatteryLoadResponseUnavailableReason, string>> = {
     V2_REQUIRED: "需要包含整机电机数据的 EnergyLogger V2 日志。",
     BATTERY_VOLTAGE_UNAVAILABLE: "日志没有可用的电池电压序列。",
     INVALID_RANGE: "所选时间范围无效或没有重叠数据。",
-    NO_COMPLETE_INTERVALS: "所选范围没有完整的整机电流与电池电压区间。",
+    NO_COMPLETE_INTERVALS: `所选范围没有完整的${scope}电流与电池电压区间。`,
   };
   return labels[reason];
 }
 
 export function componentUnavailableReason(
   reason: BatteryLoadResponseComponentUnavailableReason,
+  scope: "整机" | "已注册电机" = "整机",
 ): string {
   const labels: Readonly<Record<BatteryLoadResponseComponentUnavailableReason, string>> = {
     INSUFFICIENT_SAMPLES: "有效样本不足。",
-    WEAK_CURRENT_EXCITATION: "整机电流变化范围不足。",
+    WEAK_CURRENT_EXCITATION: `${scope}电流变化范围不足。`,
     NO_INVERSE_VOLTAGE_STEPS: "没有足够的电流与电压反向变化窗口。",
     NO_INVERSE_VOLTAGE_WINDOWS: "局部窗口没有稳定的电流与电压反向变化关系。",
     BROWNOUT_VOLTAGE_UNAVAILABLE: "日志没有可用的 Brownout 电压序列。",

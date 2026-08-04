@@ -39,7 +39,8 @@ export type LogIssueCode =
   | "V2_PACKED_WIDTH_MISMATCH"
   | "V2_SAMPLE_TIMESTAMP_INVALID"
   | "V2_SAMPLE_TIMESTAMP_ROLLBACK"
-  | "V2_FOLLOWER_SLOT_INVALID";
+  | "V2_FOLLOWER_SLOT_INVALID"
+  | "V2_SUPPLY_ONLY_SLOT_INVALID";
 
 export interface LogIssue {
   severity: IssueSeverity;
@@ -153,10 +154,15 @@ export interface EnergyLogV2SubsystemDataset {
 export interface EnergyLogV2Dataset {
   contract: import("./v2-contract").EnergyLoggerV2Contract;
   robotSampleTimestampUs: SampleTimestampSeries;
+  /** Sum of the registered motors, retained even when a whole-robot source is available. */
   robotSupplyCurrentAmps: NumericSeries;
+  robotTotalSupplyCurrentAmps?: NumericSeries;
+  robotCurrentSource: RobotCurrentSource;
   robotBatteryVoltageVolts: NumericSeries;
   subsystems: EnergyLogV2SubsystemDataset[];
 }
+
+export type RobotCurrentSource = "robot-total" | "registered-motors";
 
 export interface TimeRange {
   startUs: number;
@@ -233,6 +239,8 @@ export interface EnergyLogDataset {
   quality: DataQuality;
   /** Identifies which on-robot contract supplied the canonical electrical series. */
   sourceContract?: "v1" | "v2";
+  /** The semantic source of the canonical V2 current, power, and energy series. */
+  robotCurrentSource?: RobotCurrentSource;
   /** Present only when a supported fixed EnergyLogger V2 surface validates completely. */
   v2?: EnergyLogV2Dataset;
 }
@@ -255,6 +263,7 @@ export interface SubsystemRangeMetrics {
 }
 
 export interface RangeAnalysis {
+  robotCurrentSource?: RobotCurrentSource;
   range: TimeRange & { durationSeconds: number };
   totals: {
     energyWh: number;
@@ -328,7 +337,7 @@ export interface SupplyLimitTargetEstimate {
   subsystemName: string;
   leaderName: string;
   motorNames: readonly string[];
-  motorType: import("./v2-contract").EnergyLoggerV2MotorType;
+  motorType: import("./v2-contract").EnergyLoggerV2MotorType | null;
   motorCount: number;
   limitA: number;
   baseline: SupplyLimitMetricSnapshot;
@@ -347,7 +356,7 @@ export interface SupplyLimitMotorGroupMetrics {
   subsystemName: string;
   leaderName: string;
   motorNames: readonly string[];
-  motorType: import("./v2-contract").EnergyLoggerV2MotorType;
+  motorType: import("./v2-contract").EnergyLoggerV2MotorType | null;
   motorCount: number;
   baseline: SupplyLimitMetricSnapshot;
   robotPositiveInputRatio: number | null;

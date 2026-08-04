@@ -166,6 +166,7 @@ export interface DerivedEnergyLoggerV2Core {
   totalEnergyWh: NumericSeries;
   batteryVoltageV: NumericSeries;
   subsystems: SubsystemNode[];
+  robotCurrentSource: EnergyLogV2Dataset["robotCurrentSource"];
 }
 
 export interface EnergyLoggerV2MotorGroupElectricalSeries {
@@ -174,7 +175,7 @@ export interface EnergyLoggerV2MotorGroupElectricalSeries {
   readonly subsystemName: string;
   readonly leaderName: string;
   readonly motorNames: readonly string[];
-  readonly motorType: EnergyLoggerV2MotorType;
+  readonly motorType: EnergyLoggerV2MotorType | null;
   readonly motorCount: number;
   readonly currentA: NumericSeries;
   readonly powerW: NumericSeries;
@@ -195,11 +196,14 @@ export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyL
   if (robotRows.timestampsUs.length < 2) {
     throw new Error("EnergyLogger V2 robot timeline requires at least two samples");
   }
+  const canonicalCurrent = v2.robotCurrentSource === "robot-total"
+    ? v2.robotTotalSupplyCurrentAmps!
+    : v2.robotSupplyCurrentAmps;
   const robotCurrent = new Float64Array(robotRows.timestampsUs.length);
   const robotVoltage = new Float64Array(robotRows.timestampsUs.length);
   for (let index = 0; index < robotRows.timestampsUs.length; index += 1) {
     const recordTimestampUs = robotRows.recordTimestampsUs[index];
-    robotCurrent[index] = heldNumericAtRecord(v2.robotSupplyCurrentAmps, recordTimestampUs);
+    robotCurrent[index] = heldNumericAtRecord(canonicalCurrent, recordTimestampUs);
     const voltage = heldNumericAtRecord(v2.robotBatteryVoltageVolts, recordTimestampUs);
     robotVoltage[index] = Number.isFinite(voltage) && voltage >= 0 ? voltage : Number.NaN;
   }
@@ -241,14 +245,14 @@ export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyL
       if (sourceRow < 0) {
         droppedNonfiniteSamples += subsystem.motors.length;
         droppedNonfiniteSamples +=
-          subsystem.motors.filter((motor) => motor.leader === null).length * 2;
+          subsystem.motors.filter((motor) => motor.leader === null && motor.type !== null).length * 2;
         continue;
       }
       for (let motorIndex = 0; motorIndex < subsystem.motors.length; motorIndex += 1) {
         const motor = subsystem.motors[motorIndex];
         const offset = sourceRow * subsystem.motorSamples.width + motorIndex * 3;
         if (!Number.isFinite(subsystem.motorSamples.values[offset])) droppedNonfiniteSamples += 1;
-        if (motor.leader === null) {
+        if (motor.leader === null && motor.type !== null) {
           if (!Number.isFinite(subsystem.motorSamples.values[offset + 1])) {
             droppedNonfiniteSamples += 1;
           }
@@ -307,6 +311,7 @@ export function deriveEnergyLoggerV2Core(v2: EnergyLogV2Dataset): DerivedEnergyL
     totalEnergyWh: total.energyWh,
     batteryVoltageV,
     subsystems,
+    robotCurrentSource: v2.robotCurrentSource,
   };
 }
 
@@ -380,17 +385,29 @@ export interface EnergyLoggerV2StateMetrics extends EnergyLoggerV2MetricSnapshot
   readonly durationSeconds: number;
 }
 
-export interface EnergyLoggerV2MotorGroupMetrics {
+interface EnergyLoggerV2MotorGroupMetricsBase {
   readonly id: string;
   readonly leaderName: string;
   readonly motorNames: readonly string[];
-  readonly motorType: EnergyLoggerV2MotorType;
   readonly motorCount: number;
-  readonly analysisReduction: number;
-  readonly coverage: MotorCoverageTimeline;
-  readonly efficiency: MotorTelemetryAnalysis;
-  readonly gearRatio: GearRatioRecommendation;
 }
+
+export type EnergyLoggerV2MotorGroupMetrics = EnergyLoggerV2MotorGroupMetricsBase & (
+  | {
+    readonly analysisAvailable: false;
+    readonly unavailableReason: "SUPPLY_ONLY";
+    readonly motorType: null;
+    readonly analysisReduction: null;
+  }
+  | {
+    readonly analysisAvailable: true;
+    readonly motorType: EnergyLoggerV2MotorType;
+    readonly analysisReduction: number;
+    readonly coverage: MotorCoverageTimeline;
+    readonly efficiency: MotorTelemetryAnalysis;
+    readonly gearRatio: GearRatioRecommendation;
+  }
+);
 
 export interface EnergyLoggerV2SubsystemMetrics {
   readonly id: string;
@@ -589,6 +606,22 @@ export function analyzeEnergyLoggerV2Range(
       const motorIndices = subsystem.motors.flatMap((motor, motorIndex) =>
         motorIndex === leaderIndex || motor.leader === leader.name ? [motorIndex] : [],
       );
+      const base = {
+        id: `${subsystem.id}/${leader.name}`,
+        leaderName: leader.name,
+        motorNames: motorIndices.map((index) => subsystem.motors[index].name),
+        motorCount: motorIndices.length,
+      };
+      if (leader.type === null || leader.analysisReduction === null) {
+        motorGroups.push({
+          ...base,
+          analysisAvailable: false,
+          unavailableReason: "SUPPLY_ONLY",
+          motorType: null,
+          analysisReduction: null,
+        });
+        return;
+      }
       const extracted = groupTelemetry(
         dataset,
         subsystem,
@@ -606,11 +639,9 @@ export function analyzeEnergyLoggerV2Range(
         throw new Error(`Unable to classify EnergyLogger V2 motor group ${subsystem.name}/${leader.name}`);
       }
       motorGroups.push({
-        id: `${subsystem.id}/${leader.name}`,
-        leaderName: leader.name,
-        motorNames: motorIndices.map((index) => subsystem.motors[index].name),
+        ...base,
+        analysisAvailable: true,
         motorType: leader.type,
-        motorCount: motorIndices.length,
         analysisReduction: leader.analysisReduction,
         coverage: diagnostics.coverage,
         efficiency: diagnostics.efficiency,

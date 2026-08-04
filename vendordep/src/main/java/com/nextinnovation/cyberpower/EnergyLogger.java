@@ -11,7 +11,7 @@ import java.util.function.DoubleSupplier;
 /** Singleton entry point for robot-side Cyber Power v2 telemetry. */
 public final class EnergyLogger {
   static final String ROOT = "energyLogger/";
-  static final String CONTRACT_VERSION = "2.3";
+  static final String CONTRACT_VERSION = "2.4";
   static final long MAX_SAFE_TIMESTAMP_MICROS = 9_007_199_254_740_991L;
   private static final String VERSION_RESOURCE = "/META-INF/cyber-power-version.txt";
 
@@ -21,6 +21,7 @@ public final class EnergyLogger {
   private TimeSource timeSource = TimeSource.wpilib();
   private LogSink sink;
   private DoubleSupplier batteryVoltageSource;
+  private DoubleSupplier robotTotalCurrentSource;
   private boolean frozen;
   private boolean descriptorsPublished;
   private String manifest;
@@ -55,6 +56,14 @@ public final class EnergyLogger {
     return this;
   }
 
+  /** Registers an optional measured total robot Supply Current source in amperes. */
+  public EnergyLogger registerRobotTotalCurrentSource(DoubleSupplier totalSupplyCurrentAmps) {
+    requireConfigurable();
+    robotTotalCurrentSource =
+        Objects.requireNonNull(totalSupplyCurrentAmps, "totalSupplyCurrentAmps");
+    return this;
+  }
+
   /** Creates one independently sampled subsystem. */
   public EnergySubsystem createSubsystem(String name) {
     requireConfigurable();
@@ -84,12 +93,23 @@ public final class EnergyLogger {
       totalSupplyCurrentAmps = addOrNaN(totalSupplyCurrentAmps, subsystem.totalSupplyCurrentAmps());
     }
     double batteryVoltageVolts = finiteNonnegativeOrNaN(batteryVoltageSource.getAsDouble());
+    double robotTotalSupplyCurrentAmps =
+        robotTotalCurrentSource == null
+            ? Double.NaN
+            : finiteOrNaN(robotTotalCurrentSource.getAsDouble());
 
     previousRobotTimestampMicros = timestampMicros;
     hasPreviousRobotTimestamp = true;
     sink.recordLong(ROOT + "robot/sampleTimestampUs", timestampMicros, timestampMicros);
     sink.recordDouble(
         ROOT + "robot/supplyCurrentAmps", totalSupplyCurrentAmps, "A", timestampMicros);
+    if (robotTotalCurrentSource != null) {
+      sink.recordDouble(
+          ROOT + "robot/totalSupplyCurrentAmps",
+          robotTotalSupplyCurrentAmps,
+          "A",
+          timestampMicros);
+    }
     sink.recordDouble(
         ROOT + "robot/batteryVoltageVolts", batteryVoltageVolts, "V", timestampMicros);
   }
@@ -187,5 +207,9 @@ public final class EnergyLogger {
 
   private static double finiteNonnegativeOrNaN(double value) {
     return Double.isFinite(value) && value >= 0.0 ? value : Double.NaN;
+  }
+
+  private static double finiteOrNaN(double value) {
+    return Double.isFinite(value) ? value : Double.NaN;
   }
 }

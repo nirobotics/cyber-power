@@ -43,7 +43,7 @@ public final class EnergySubsystem {
    *     regenerative braking; this sign must not depend on rotor direction
    * @param rawRotorVelocityRadPerSec signed raw rotor velocity in radians per second
    */
-  public void registerLeaderMotor(
+  public void registerMotor(
       String name,
       MotorType type,
       double analysisReduction,
@@ -65,12 +65,29 @@ public final class EnergySubsystem {
   }
 
   /**
+   * Registers a motor for connection-aware Supply Current logging without model analysis.
+   *
+   * @param name unique motor name inside this subsystem
+   * @param connected whether this motor's telemetry is connected for the current sample
+   * @param supplyCurrentAmps battery-side Supply Current in amperes, positive when drawing from the
+   *     DC bus and negative when returning current to it; this sign must not depend on rotor direction
+   */
+  public void registerMotor(
+      String name, BooleanSupplier connected, DoubleSupplier supplyCurrentAmps) {
+    requireConfigurable();
+    String validatedName = validateNewMotor(name);
+    motors.add(
+        MotorRegistration.basic(
+            validatedName,
+            Objects.requireNonNull(connected, "connected"),
+            Objects.requireNonNull(supplyCurrentAmps, "supplyCurrentAmps")));
+  }
+
+  /**
    * Registers a homogeneous follower. Its Stator Current and rotor velocity are inherited from
    * the named leader for analysis and are not sampled from the robot.
    *
    * @param name unique motor name inside this subsystem
-   * @param type known motor model; must match the leader
-   * @param analysisReduction motor rotations per analyzed output rotation; must match the leader
    * @param leaderName previously registered leader motor name
    * @param connected whether this motor's telemetry is connected for the current sample
    * @param supplyCurrentAmps battery-side Supply Current in amperes, positive when drawing from the
@@ -78,8 +95,6 @@ public final class EnergySubsystem {
    */
   public void registerFollowerMotor(
       String name,
-      MotorType type,
-      double analysisReduction,
       String leaderName,
       BooleanSupplier connected,
       DoubleSupplier supplyCurrentAmps) {
@@ -95,24 +110,11 @@ public final class EnergySubsystem {
       throw new IllegalArgumentException(
           "Follower " + validatedName + " cannot follow follower " + validatedLeaderName);
     }
-    MotorType validatedType = Objects.requireNonNull(type, "type");
-    double validatedReduction = validateAnalysisReduction(analysisReduction);
-    if (validatedType != leader.type) {
-      throw new IllegalArgumentException(
-          "Follower " + validatedName + " must use the same motor type as " + validatedLeaderName);
-    }
-    if (Double.compare(validatedReduction, leader.analysisReduction) != 0) {
-      throw new IllegalArgumentException(
-          "Follower "
-              + validatedName
-              + " must use the same analysis reduction as "
-              + validatedLeaderName);
-    }
     motors.add(
         MotorRegistration.follower(
             validatedName,
-            validatedType,
-            validatedReduction,
+            leader.type,
+            leader.analysisReduction,
             validatedLeaderName,
             Objects.requireNonNull(connected, "connected"),
             Objects.requireNonNull(supplyCurrentAmps, "supplyCurrentAmps")));
@@ -187,7 +189,7 @@ public final class EnergySubsystem {
       double supplyCurrent = finiteOrNaN(motor.supplyCurrentAmps.getAsDouble());
       packedSamples[offset] = supplyCurrent;
       sum = addOrNaN(sum, supplyCurrent);
-      if (motor.isLeader()) {
+      if (motor.isLeader() && motor.hasAnalysis()) {
         packedSamples[offset + 1] = finiteOrNaN(motor.statorCurrentAmps.getAsDouble());
         packedSamples[offset + 2] = finiteOrNaN(motor.rawRotorVelocityRadPerSec.getAsDouble());
       } else {
@@ -239,7 +241,7 @@ public final class EnergySubsystem {
   static final class MotorRegistration {
     final String name;
     final MotorType type;
-    final double analysisReduction;
+    final Double analysisReduction;
     final String leaderName;
     final BooleanSupplier connected;
     final DoubleSupplier supplyCurrentAmps;
@@ -249,7 +251,7 @@ public final class EnergySubsystem {
     private MotorRegistration(
         String name,
         MotorType type,
-        double analysisReduction,
+        Double analysisReduction,
         String leaderName,
         BooleanSupplier connected,
         DoubleSupplier supplyCurrentAmps,
@@ -284,10 +286,16 @@ public final class EnergySubsystem {
           rawRotorVelocityRadPerSec);
     }
 
+    static MotorRegistration basic(
+        String name, BooleanSupplier connected, DoubleSupplier supplyCurrentAmps) {
+      return new MotorRegistration(
+          name, null, null, null, connected, supplyCurrentAmps, null, null);
+    }
+
     static MotorRegistration follower(
         String name,
         MotorType type,
-        double analysisReduction,
+        Double analysisReduction,
         String leaderName,
         BooleanSupplier connected,
         DoubleSupplier supplyCurrentAmps) {
@@ -297,6 +305,10 @@ public final class EnergySubsystem {
 
     boolean isLeader() {
       return leaderName == null;
+    }
+
+    boolean hasAnalysis() {
+      return type != null;
     }
   }
 }

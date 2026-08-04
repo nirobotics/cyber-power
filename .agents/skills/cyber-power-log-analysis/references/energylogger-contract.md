@@ -3,7 +3,7 @@
 本文同时定义两条互不依赖的读取路径：
 
 - v1：只用于兼容已有日志；
-- v2.3：机器人端当前唯一写入契约；网页可在完全没有 v1 字段时独立解析 v2.1、v2.2 与 v2.3。
+- v2.4：机器人端当前唯一写入契约；网页可在完全没有 v1 字段时独立解析 v2.1、v2.2、v2.3 与 v2.4。
 
 不得根据队号、项目名、赛季或固定子系统清单判断兼容性。
 
@@ -57,13 +57,13 @@ energyLogger
 <root>/manifest
 ```
 
-`contractVersion` 必须精确等于网页明确支持的 `2.1`、`2.2` 或 `2.3`；不得把未知未来 minor 当作兼容版本。`libraryVersion` 必须为非空字符串。三个值在日志中不可改变；可重复写入同一值。
+`contractVersion` 必须精确等于网页明确支持的 `2.1`、`2.2`、`2.3` 或 `2.4`；不得把未知未来 minor 当作兼容版本。`libraryVersion` 必须为非空字符串。三个值在日志中不可改变；可重复写入同一值。
 
-网页优先选择完整有效的 V2 root。若日志只有旧 v1，则继续走 v1。历史实验版 2.0 只有在同一日志自身包含完整 v1 时才按 v1 读取，不获得 V2 专属分析。v2.1 永久保留历史 RPS 语义；v2.2 把原生转速改为 `rad/s`；v2.3 是当前 writer，并增加逐电机连接门控及有符号 Stator Current。
+网页优先选择完整有效的 V2 root。若日志只有旧 v1，则继续走 v1。历史实验版 2.0 只有在同一日志自身包含完整 v1 时才按 v1 读取，不获得 V2 专属分析。v2.1 永久保留历史 RPS 语义；v2.2 把原生转速改为 `rad/s`；v2.3 增加逐电机连接门控及有符号 Stator Current；v2.4 增加 supply-only 电机与可选整机 Total Supply Current。
 
 ### Manifest
 
-Manifest 必须严格只有以下字段；未知字段、缺字段和未知电机型号均拒绝：
+Manifest 必须严格只有以下字段；未知字段、缺字段和未知电机型号永远拒绝：
 
 ```json
 {
@@ -82,6 +82,12 @@ Manifest 必须严格只有以下字段；未知字段、缺字段和未知电�
           "type": "KRAKEN_X60_FOC",
           "analysisReduction": 6.75,
           "leader": "left"
+        },
+        {
+          "name": "auxiliary",
+          "type": null,
+          "analysisReduction": null,
+          "leader": null
         }
       ]
     }
@@ -93,10 +99,12 @@ Manifest 必须严格只有以下字段；未知字段、缺字段和未知电�
 
 - subsystem `name` 全局唯一且非空；
 - motor `name` 在所属 subsystem 内唯一且非空；
-- `analysisReduction` 是 Cyber Power 分析使用的 `motor rotations / mechanism rotations`，必须为大于零的有限值；小于 `1` 的增速传动合法；
+- v2.1–v2.3 的 `type` 必须是封闭 `MotorType`，`analysisReduction` 必须为大于零的有限值；
+- v2.4 的完整分析电机沿用上述要求；supply-only 电机必须同时使用 `type: null` 与 `analysisReduction: null`，只允许缺少模型分析能力，不表示或接受未知型号；一个字段为 `null`、另一个非 `null` 非法；
+- `analysisReduction` 是 Cyber Power 分析使用的 `motor rotations / mechanism rotations`；小于 `1` 的增速传动合法；
 - `analysisReduction` 不得从 Talon 或其他控制器的 Feedback ratio 推断，两者即使当前数值相同也必须保持独立语义；
 - Leader/独立电机使用 `leader: null`；Follower 直接写同一 subsystem 内 Leader 的电机名字；不得引用自己、另一个 Follower 或其他 subsystem；
-- 同一 Leader 组内所有电机必须具有相同 `type` 与 `analysisReduction`；
+- 同一 Leader 组内所有电机必须具有相同的 nullable `type` 与 `analysisReduction`；Follower 的值由 writer 从 Leader 继承；
 - subsystem ID 按注册顺序派生为 `s0`、`s1`……，不写入 Manifest。
 
 封闭 `MotorType` 集合：
@@ -108,7 +116,7 @@ FALCON_500, FALCON_500_FOC, ROMI_BUILT_IN, KRAKEN_X60,
 KRAKEN_X60_FOC, KRAKEN_X44, KRAKEN_X44_FOC, MINION, NEO_VORTEX
 ```
 
-网页按 `MotorType` 使用内建电机参数表。日志不写自定义或未知型号，也不写参数快照。
+网页按 `MotorType` 使用内建电机参数表。日志不写自定义或未知型号，也不写参数快照。supply-only 组继续参加基础电流、功率、能量、分状态统计和限流回放，但不生成估算驱动效率、覆盖率或减速比建议。
 
 ### 固定数据字段
 
@@ -118,6 +126,7 @@ Robot：
 <root>/robot/sampleTimestampUs      int64
 <root>/robot/supplyCurrentAmps      double
 <root>/robot/batteryVoltageVolts    double
+<root>/robot/totalSupplyCurrentAmps double  # v2.4 optional
 ```
 
 每个按顺序派生的 subsystem：
@@ -134,23 +143,26 @@ Robot：
 v2.1: [supplyCurrentAmps, statorCurrentAmps, rotorVelocityRps]
 v2.2: [supplyCurrentAmps, statorCurrentAmps, rotorVelocityRadPerSec]
 v2.3: [supplyCurrentAmps, statorCurrentAmps, rotorVelocityRadPerSec]
+v2.4: [supplyCurrentAmps, statorCurrentAmps, rotorVelocityRadPerSec]
 ```
 
 - Supply Current 保留电池侧符号：正值从直流母线取电，负值向直流母线返回电流；单台控制器的负值不代表整机电池发生净回充；
-- v2.3 writer 在每次 subsystem 采样中只读取每台电机的连接状态一次；断连时三个槽全部写 `NaN`，且不读取该电机的数值源；
+- v2.3/v2.4 writer 在每次 subsystem 采样中只读取每台电机的连接状态一次；断连时三个槽全部写 `NaN`，且不读取该电机的数值源；
 - 连接正常的 Leader/独立电机写 Supply Current、Stator Current 与 Rotor Velocity；数值源非有限时对应槽写 `NaN`；
+- 连接正常的 supply-only Leader/独立电机只写自己的有符号 Supply Current，后两格必须精确为 `NaN`；
 - 连接正常的 Follower 只写自己的有符号 Supply Current，后两格必须精确为 `NaN`，包括禁止 `+Infinity` 和 `-Infinity`；
 - `rotorVelocityRps` / `rotorVelocityRadPerSec` 必须是未经过控制器 Feedback ratio 转换的原生电机转子速度；网页在 parser 边界把 v2.1 第三槽原地乘 `2π`，此后所有内部模型只处理 `rad/s`；
-- v2.1/v2.2 的 `statorCurrentAmps` 是历史无符号幅值；v2.3 要求适配器把 Supply Current 规范为“从直流母线取电为正、向直流母线返回为负”，把 Stator Current 规范为“motoring 为正、regenerative braking 为负”，两者都不得跟随转子旋转方向翻转；
+- v2.1/v2.2 的 `statorCurrentAmps` 是历史无符号幅值；v2.3/v2.4 要求适配器把 Supply Current 规范为“从直流母线取电为正、向直流母线返回为负”，把 Stator Current 规范为“motoring 为正、regenerative braking 为负”，两者都不得跟随转子旋转方向翻转；
 - robot `supplyCurrentAmps` 仅为 writer 中已注册物理电机的 Supply Current 合计，不代表含 roboRIO、无线电、传感器等用电的完整整机电流；网页必须标为“已注册电机合计电流”。
+- v2.4 `totalSupplyCurrentAmps` 只在使用方显式注册同步整机电流源时存在，保留电池侧符号且非有限值写 `NaN`；它不改变 `supplyCurrentAmps` 的既有含义。该 entry 一旦存在，网页整份日志都使用它作为整机 canonical 电流，局部无效区间保持为空洞，不与已注册电机合计逐样本混用；entry 不存在时才整体回退到 `supplyCurrentAmps`。
 
 所有 producer timestamp 使用同一注册时钟域，单位为整数微秒。各 subsystem 在自己的 periodic 中独立采样，因此彼此 record timestamp 不要求对齐。时间回退非法；同一 producer timestamp 重复时最后一条记录生效。
 
 ### 基础能量重建
 
-网页将 v2.1/v2.2/v2.3 重建为既有图表可消费的 canonical 序列：
+网页将 v2.1/v2.2/v2.3/v2.4 重建为既有图表可消费的 canonical 序列：
 
-- robot 电流取 `robot/supplyCurrentAmps`，不得由 subsystem 相加重建；
+- v2.4 存在 `robot/totalSupplyCurrentAmps` 时 robot 电流取该序列；否则取 `robot/supplyCurrentAmps`。两者都不得由 subsystem 相加重建；
 - subsystem 电流取该 subsystem 所有物理电机 Supply Current 的 held 合计；
 - 瞬时功率为 held Battery Voltage × held Supply Current，保留正负号；
 - 累计耗电量只积分 `max(power, 0)`，单位 Wh，保持单调；
@@ -167,9 +179,9 @@ subsystem `state` 是字符串并自动作用于该 subsystem 下所有电机。
 
 ### 估算驱动效率
 
-只在同构 Leader 组上分析：Leader 加所有直接 Follower。组的电池输入使用每台物理电机 Supply Current 合计；转速与 Stator Current 只使用 Leader 原生信号。Follower 不产生或伪造转速、Stator Current。
+只在配置完整电机模型的同构 Leader 组上分析：Leader 加所有直接 Follower。组的电池输入使用每台物理电机 Supply Current 合计；转速与 Stator Current 只使用 Leader 原生信号。Follower 不产生或伪造转速、Stator Current。supply-only 组明确标记为模型分析不可用，不尝试猜测型号或减速比。
 
-历史 v2.1/v2.2 Stator Current 没有方向；v2.3 保留 Stator Current 与 Rotor Velocity 的符号。估算驱动效率和减速比推荐只使用正 Supply Current、正 Stator Current 的 motoring 区间；负 Stator Current 只表示再生制动工况，不证明电池发生净回充，仍保留在 canonical 时序，但不参与这两项分析。展示名称必须是“估算驱动效率”。估算机械功率按同构电机数量放大；机械功率明显超过电池输入的区间按不可信样本剔除。不得把历史无符号日志解释为再生效率，也不显示再生效率。
+历史 v2.1/v2.2 Stator Current 没有方向；v2.3/v2.4 保留 Stator Current 与 Rotor Velocity 的符号。估算驱动效率和减速比推荐只使用正 Supply Current、正 Stator Current 的 motoring 区间；负 Stator Current 只表示再生制动工况，不证明电池发生净回充，仍保留在 canonical 时序，但不参与这两项分析。展示名称必须是“估算驱动效率”。估算机械功率按同构电机数量放大；机械功率明显超过电池输入的区间按不可信样本剔除。不得把历史无符号日志解释为再生效率，也不显示再生效率。
 
 效率有效覆盖率按时间而不是样本数量计算。分母是所选范围内全部正时长区间，分子是通过以下唯一分类门禁的区间时长：Battery Voltage、组 Supply Current、Leader Stator Current 与 Leader Rotor Velocity 均有限，Battery Voltage、Supply Current、Stator Current 均严格大于零，并且 `估算机械功率 + 估算铜耗 <= 1.1 × 电池输入功率 + 1 W`。零 Stator Current 必须无效；负 Stator Current 单独标记为再生制动工况（不代表电池净回充）；任一 Follower Supply Current 非有限时，严格组电流合计为非有限且整个组区间无效。
 
@@ -185,11 +197,11 @@ subsystem `state` 是字符串并自动作用于该 subsystem 下所有电机。
 
 ## 电池电压响应代理
 
-PDP 2.0 等没有通信能力的配电设备不会提供整机总电流。缺少同步 PDH/PDP Total Current 时，电池页只能使用 V2 `robot/batteryVoltageVolts` 和 `robot/supplyCurrentAmps`，后者仅为已注册物理电机 Supply Current 合计。页面必须使用“已注册电机负载下的电压响应”“局部等效压降代理”等名称，不得称为电池真实内阻、SOC、容量、剩余时间、整机总电流或整机总 Wh。
+PDP 2.0 等没有通信能力的配电设备不会提供整机总电流。缺少同步 Total Supply Current 时，电池页只能使用 V2 `robot/batteryVoltageVolts` 和 `robot/supplyCurrentAmps`，后者仅为已注册物理电机 Supply Current 合计，页面必须使用“已注册电机负载下的电压响应”。v2.4 存在 `robot/totalSupplyCurrentAmps` 时改用“整机负载下的电压响应”。两种来源都只能输出“局部等效压降代理”，不得称为电池真实内阻、SOC、容量或剩余时间。
 
-基础统计按 Battery Voltage 与已注册电机 Supply Current 的 sample-and-hold 并集和实际 `dt` 计算，包括时间加权电压、正向输入 `Σ(max(VI,0)Δt)`、正向电量 `Σ(max(I,0)Δt)`、`I²t`、最低电压、峰值已注册电流、实际低压持续时间和日志已记录的 Brownout 事件。负 Supply Current 可保留为母线返回区间，但不能据此宣称电池净回充。
+基础统计按 Battery Voltage 与所选 robot current source 的 sample-and-hold 并集和实际 `dt` 计算，包括时间加权电压、正向输入 `Σ(max(VI,0)Δt)`、正向电量 `Σ(max(I,0)Δt)`、`I²t`、最低电压、峰值电流、实际低压持续时间和日志已记录的 Brownout 事件。负 Supply Current 可保留为母线返回区间，但不能据此宣称电池净回充。
 
-局部模型只在所选范围和实际观测负载范围内拟合 `V ≈ Vintercept - Req × Iregistered`。应同时输出固定窗口稳健回归的时变 `Req`、电流激励范围与残差，以及彼此分离的负载阶跃 `ΔV/ΔI` 分布；弱激励、非正斜率、非有限数据或样本不足必须明确显示不可用。`Req` 只能称为相对于已注册电机负载的局部等效压降系数。按 Robot Mode 的条件统计只是相关性分组，不推断因果。禁止用该模型预测修改减速比后的最低电压、Brownout 或节能量。
+局部模型只在所选范围和实际观测负载范围内拟合 `V ≈ Vintercept - Req × Irobot`。应同时输出固定窗口稳健回归的时变 `Req`、电流激励范围与残差，以及彼此分离的负载阶跃 `ΔV/ΔI` 分布；弱激励、非正斜率、非有限数据或样本不足必须明确显示不可用。`Req` 只能按实际来源称为相对于已注册电机负载或整机负载的局部等效压降系数。按 Robot Mode 的条件统计只是相关性分组，不推断因果。禁止用该模型预测修改减速比后的最低电压、Brownout 或节能量。
 
 ## Optional robot state
 
@@ -210,7 +222,7 @@ V2 Battery Voltage 使用固定 robot 字段，上述电池字段只服务 v1。
 
 ## Supply Current 限流历史模拟
 
-模拟只作用于 V2 Manifest 中的 Leader 电机组：一台 Leader 与所有直接 Followers 组成一个互不重叠的目标，Follower 不单独出现。输入值是该电机组合计 Supply Current 上限，不是单个电机控制器配置。多个目标必须唯一；合法 Manifest 已保证各电机组互不重叠，因此不再使用 canonical 子系统节点、聚合确认或祖先/后代规则。正向电流和功率按 `min(1, limit / positiveCurrent)` 比例缩放，累计 Wh 只缩放正向输入能量；负值保持原样。整机电流和功率只在 robot 时间轴上按各组 held value 计算，避免 subsystem 独立时间戳造成错位扣减；整机能量从 signed residual 功率重新积分正向输入，不能直接相加各组正向节省量。成员样本不完整时不补值、不扣减。V1 因没有 Manifest 而明确不可用。不预测 Battery Voltage、Brownout、Stator Current、机构动作或动作耗时，也不修改原图表。
+模拟只作用于 V2 Manifest 中的 Leader 电机组：一台 Leader 与所有直接 Followers 组成一个互不重叠的目标，Follower 不单独出现；supply-only 组同样是合法目标。输入值是该电机组合计 Supply Current 上限，不是单个电机控制器配置。多个目标必须唯一；合法 Manifest 已保证各电机组互不重叠，因此不再使用 canonical 子系统节点、聚合确认或祖先/后代规则。正向电流和功率按 `min(1, limit / positiveCurrent)` 比例缩放，累计 Wh 只缩放正向输入能量；负值保持原样。整机电流和功率只在 robot 时间轴上按各组 held value 计算，避免 subsystem 独立时间戳造成错位扣减；整机能量从 signed residual 功率重新积分正向输入，不能直接相加各组正向节省量。成员样本不完整时不补值、不扣减。V1 因没有 Manifest 而明确不可用。不预测 Battery Voltage、Brownout、Stator Current、机构动作或动作耗时，也不修改原图表。
 
 ## 错误策略
 
@@ -219,9 +231,9 @@ Fatal 示例：
 - WPILOG magic/version 无效或中段损坏；
 - root 同优先级歧义；
 - v1 缺少 totals 或完整动态节点；
-- V2 描述字段缺失、改变、类型错误，或版本不在精确支持集 `2.1/2.2/2.3` 中；
+- V2 描述字段缺失、改变、类型错误，或版本不在精确支持集 `2.1/2.2/2.3/2.4` 中；
 - Manifest JSON/字段/名字/电机型号/Leader 关系/`analysisReduction` 非法；
-- 固定 entry 缺失、类型错误、packed width 改变、Follower 后两格不是精确 `NaN`；
+- 固定 entry 缺失、类型错误、packed width 改变、Follower 或 supply-only 电机后两格不是精确 `NaN`；
 - producer timestamp 非法或回退；
 - robot 没有可用有限电气区间。
 

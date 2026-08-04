@@ -975,6 +975,7 @@ export async function parseEnergyLog(
         resetCount: 0,
       },
       sourceContract: "v2",
+      robotCurrentSource: derived.robotCurrentSource,
       v2: collected.v2,
     };
   }
@@ -1412,6 +1413,7 @@ export function analyzeEnergyRange(
     range.endUs,
   );
   return {
+    robotCurrentSource: dataset.robotCurrentSource,
     range: { ...range, durationSeconds },
     totals: {
       energyWh: totalEnergy,

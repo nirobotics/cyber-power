@@ -55,15 +55,15 @@ AdvantageKit 使用 `/DriverStation/Enabled`、`Autonomous`、`Test` 与 `MatchT
 
 自动回归覆盖：V2 Manifest 只生成 Leader 电机组，Follower Supply Current 严格并入对应 Leader 且不生成独立目标；同一组不可重复，多组原子计算且与输入顺序无关；V1 明确不可用；电流、功率和正向输入 Wh 按 held 比例缩放，负值与不完整成员区间不编造扣减；存在 Enabled 时平均功率排除 Disabled；整机峰值只在 robot 时间轴计算 residual；源 canonical 与 packed typed arrays 不修改。该报告不预测 Battery Voltage、Brownout、Stator Current、机构动作或完成时间。
 
-## v2.3 跨语言契约
+## v2.4 跨语言契约
 
 Java vendordep 测试生成：
 
 ```text
 vendordep/build/generated-fixtures/cyber-power-v2.wpilog
-WPILOG 1.0 / CyberPowerV23
-13 entries / 47 complete records
-2 subsystems / 3 motors / 1 Follower
+WPILOG 1.0 / CyberPowerV24
+14 entries / 52 complete records
+2 subsystems / 5 motors / 2 Followers
 ```
 
 验证命令：
@@ -75,15 +75,15 @@ pnpm vendordep:contract
 脚本直接调用网页公开 parser，并断言：
 
 - V2-only 日志在没有 v1 totals/动态节点时选择 `sourceContract=v2`；
-- `contractVersion` 精确为 `2.3`，packed 原生转速使用 `rad/s`，Stator Current 保留符号；
-- Manifest 只有 subsystem `name/motors` 和 motor `name/type/analysisReduction/leader`；
+- `contractVersion` 精确为 `2.4`，packed 原生转速使用 `rad/s`，Supply/Stator Current 保留符号；
+- Manifest 只有 subsystem `name/motors` 和 motor `name/type/analysisReduction/leader`，supply-only 电机的型号与减速比同时为 `null`；
 - `samples.width === motors.length * 3`；
-- Follower Stator Current 和原生 rotor velocity 槽精确为 `NaN`；
-- robot canonical power 等于 held Battery Voltage × 已注册电机合计 Supply Current；
+- Follower 和 supply-only 电机的 Stator Current、原生 rotor velocity 槽精确为 `NaN`；
+- 总电流 entry 存在时，robot canonical power 等于 held Battery Voltage × PDH/PDP 整机总电流，不逐样本回退到已注册电机合计；
 - 异步 subsystem 时间轴不会产生 robot 对 subsystem 的虚假对账 warning；
-- 分状态统计与每个 Leader 的同构电机组可生成。
+- 分状态统计、已知型号 Leader 组高级分析与 supply-only 组限流回放均可生成；supply-only 高级分析明确不可用。
 
-`tests/fixtures/wpilog-builder.ts` 另行生成固定 V2.1/V2.2/V2.3 合成日志，覆盖 V2.1 RPS 到 `rad/s` 的兼容归一化、三版物理指标兼容性、V2.3 signed Stator Current、大小写/namespace root 识别、稀疏 sample-and-hold、packed width、负 Supply Current、无有限 robot 电气区间、Follower 槽和 V1 独立回归。
+`tests/fixtures/wpilog-builder.ts` 另行生成固定 V2.1/V2.2/V2.3/V2.4 合成日志，覆盖 V2.1 RPS 到 `rad/s` 的兼容归一化、四版物理指标兼容性、V2.3/V2.4 signed Current、V2.4 nullable pair、未知型号 fatal、整份日志 current source 选择、大小写/namespace root 识别、稀疏 sample-and-hold、packed width、负 Supply Current、无有限 robot 电气区间、Follower/supply-only 槽和 V1 独立回归。
 
 ## v2.3 真实日志回归
 
@@ -120,11 +120,12 @@ pnpm vendordep:contract
 - WPILOG header/control/typed payload、尾截断和中段损坏；
 - 任意命名空间 EnergyLogger root，无队伍白名单；
 - v1 sample-and-hold、reset、区间、Brownout、模式、动态层级和历史对账；
-- V2.1/V2.2/V2.3 精确 Manifest、固定 entry、独立 producer timestamp、稀疏 held 值、packed 槽与 Worker transferable；
-- V2.1 RPS 与 V2.2/V2.3 `rad/s` 归一化后的 canonical 电流/功率/耗电、合并明细、估算驱动效率和减速比推荐；
+- V2.1/V2.2/V2.3/V2.4 精确 Manifest、固定 entry、独立 producer timestamp、稀疏 held 值、packed 槽与 Worker transferable；
+- V2.1 RPS 与 V2.2/V2.3/V2.4 `rad/s` 归一化后的 canonical 电流/功率/耗电、合并明细、估算驱动效率和减速比推荐；
+- V2.4 supply-only 基础指标与限流回放、严格 nullable pair、未知型号 fatal、可选整机总电流和无逐样本 fallback；
 - CTRE Kraken X44/X60 曲线常数、空载损耗电流、同区间铜耗积分、电机覆盖率分类、异步电池电压事件、精确选区端点、长于 4096 区间的全量 `dt` 评分、Leader/Follower 名称和独立“电机”页；
 - V2 电池页的异步 sample-and-hold、非均匀 `dt`、正向 Wh/Ah、`I²t`、局部稳健拟合、独立负载阶跃、弱激励降级、Robot Mode 条件统计、低压与 Brownout 实测事件；
-- V1-only 不显示 V2 Card；V2 电流、功率和能量指标明确标为已注册电机口径；
+- V1-only 不显示 V2 Card；V2 电流、功率和能量指标按日志明确标为整机或已注册电机口径；
 - 飞书登录、session、tenant、Supabase server-only 数据边界与离线缓存；
 - 图表共享游标、尖峰保留、子系统显隐、电池局部代理时间序列和模拟页报告。
 

@@ -395,6 +395,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
           <MetricsRail
             analysis={analysis}
             sourceContract={dataset.sourceContract}
+            robotCurrentSource={dataset.robotCurrentSource}
             onLocatePeakPower={() => locatePeak("power")}
             onLocatePeakCurrent={() => locatePeak("current")}
           />
@@ -492,6 +493,7 @@ export function AnalysisDashboard({ result }: { result: AnalysisResult }) {
               errors={supplyEstimateState.errors}
               estimate={supplyEstimateState.estimate}
               simulationEnabled={supplySimulationEnabled}
+              robotCurrentSource={dataset.robotCurrentSource}
               unavailableReason={dataset.v2
                 ? undefined
                 : "当前 V1 日志没有电机 Manifest，无法按 Leader 电机组进行限流模拟。"}

@@ -53,6 +53,7 @@ function analysisFixture(
         states: [],
         motorGroups: [
           {
+            analysisAvailable: true,
             id: "s0/left",
             leaderName: "left",
             motorNames,
@@ -274,6 +275,7 @@ describe("V2AnalysisSections", () => {
 
   it("shows the evidence behind each available gear-ratio recommendation", () => {
     const group = analysisFixture().subsystems[0].motorGroups[0];
+    if (!group.analysisAvailable) throw new Error("expected analyzable fixture");
     const html = renderToStaticMarkup(<GearRatioEvidence group={group} />);
 
     expect(html).toContain("本组推荐依据");
@@ -292,6 +294,7 @@ describe("V2AnalysisSections", () => {
 
   it("labels a negative reduction as an estimated copper-loss increase", () => {
     const base = analysisFixture().subsystems[0].motorGroups[0];
+    if (!base.analysisAvailable) throw new Error("expected analyzable fixture");
     if (!base.gearRatio.available) throw new Error("expected available fixture");
     const group: EnergyLoggerV2MotorGroupMetrics = {
       ...base,
@@ -311,6 +314,7 @@ describe("V2AnalysisSections", () => {
 
   it("keeps the unavailable recommendation reason and limitations in the compact evidence", () => {
     const base = analysisFixture().subsystems[0].motorGroups[0];
+    if (!base.analysisAvailable) throw new Error("expected analyzable fixture");
     const group: EnergyLoggerV2MotorGroupMetrics = {
       ...base,
       gearRatio: {

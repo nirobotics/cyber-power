@@ -31,11 +31,11 @@ AdvantageKit 会省略未变化值，因此瞬时电流和功率按 sample-and-h
 
 ## EnergyLogger V2 独立读取
 
-v2.3 是机器人端当前写入契约，不依赖任何 v1 totals 或动态节点。网页同时读取历史 v2.1、v2.2 与当前 v2.3：v2.1 packed 第三槽的 RPS 在 parser 边界原地乘 `2π`，v2.2/v2.3 的 `rad/s` 保持不变，后续模型只处理 `rad/s`。v2.1/v2.2 Stator Current 按历史幅值解释；v2.3 适配器必须把 Supply Current 规范为从直流母线取电为正、向母线返回为负，把 Stator Current 规范为驱动为正、再生制动为负，二者均与转子旋转方向无关。root 下精确版本描述与固定字段通过后，解析器直接从 Battery Voltage 和已注册电机 Supply Current 重建既有图表所需的电流、功率和累计耗电序列。历史 v1 parser 保留，不参与 V2 兼容判断。
+v2.4 是机器人端当前写入契约，不依赖任何 v1 totals 或动态节点。网页同时读取历史 v2.1、v2.2、v2.3 与当前 v2.4：v2.1 packed 第三槽的 RPS 在 parser 边界原地乘 `2π`，后续版本的 `rad/s` 保持不变，后续模型只处理 `rad/s`。v2.1/v2.2 Stator Current 按历史幅值解释；v2.3/v2.4 适配器必须把 Supply Current 规范为从直流母线取电为正、向母线返回为负，把 Stator Current 规范为驱动为正、再生制动为负，二者均与转子旋转方向无关。历史 v1 parser 保留，不参与 V2 兼容判断。
 
-Manifest 只包含有序 subsystem 及其电机的 `name`、`type`、`analysisReduction`、`leader`。`analysisReduction` 是 Cyber Power 的机械分析传动比，不从控制器 Feedback ratio 推断。subsystem ID 按顺序派生为 `sN`。每个 subsystem 只有 producer timestamp、state 与 `motors/samples`；每台电机固定三格 Supply Current、Stator Current、原生 rotor velocity。Follower 后两格必须是 `NaN`。
+Manifest 只包含有序 subsystem 及其电机的 `name`、`type`、`analysisReduction`、`leader`。`analysisReduction` 是 Cyber Power 的机械分析传动比，不从控制器 Feedback ratio 推断。v2.4 supply-only 电机必须同时使用 `type: null` 与 `analysisReduction: null`；只空一个字段、历史版本出现 `null`，或出现任意未知非空型号都直接拒绝。subsystem ID 按顺序派生为 `sN`。每个 subsystem 只有 producer timestamp、state 与 `motors/samples`；每台电机固定三格 Supply Current、Stator Current、原生 rotor velocity。Follower 与 supply-only 电机后两格必须是 `NaN`。
 
-Robot `supplyCurrentAmps` 是已注册物理电机合计，不代表完整整机输入，因此界面显示“已注册电机合计电流”。robot 电流为权威来源，不从异步 subsystem 序列反算，也不对两者做同步能量对账。
+Robot `supplyCurrentAmps` 永远是已注册物理电机合计。v2.4 可额外提供 `totalSupplyCurrentAmps` 作为同步 PDH/PDP 整机总电流。整份日志只选择一个 canonical 来源：只要总电流 entry 存在就全程使用它，缺失或非有限样本保持缺口，不逐样本回退；entry 不存在才使用已注册电机合计。两条原始序列都保留供口径说明和诊断，不从异步 subsystem 序列反算。
 
 ### 单遍解析与时间语义
 
@@ -45,11 +45,11 @@ WPILOG record 时间用于对稀疏字段做 sample-and-hold，`sampleTimestampU
 
 ### Canonical 序列与高级分析
 
-- robot 功率为 held Battery Voltage × held registered-motor Supply Current；
+- robot 功率为 held Battery Voltage × held canonical Supply Current；
 - subsystem 电流为物理电机 Supply Current 合计，功率时间轴与 Battery Voltage 事件取并集；
 - 功率保留符号，累计耗电只积分 `max(power, 0)`；
 - 分状态统计只按 subsystem state 输出有效持续时间、耗电、平均/峰值功率和峰值电流；存在 Enabled 时排除 Disabled；
-- 同构电机组以 Manifest 的 Leader 为主行，Follower 只贡献自己的 Supply Current；Leader 的 Stator Current 与原生转速代表组内相同工作点；
+- 同构电机组以 Manifest 的 Leader 为主行，Follower 只贡献自己的 Supply Current；Leader 的 Stator Current 与原生转速代表组内相同工作点。supply-only 组参与基础电气指标和限流回放，但效率、覆盖率、铜耗与减速比推荐明确不可用；
 - 电机时间轴合并 subsystem 样本、异步 Battery Voltage 事件和选区精确端点，再按每个相邻区间的真实 `dt` 分类；覆盖率是有效区间时长除以完整选区时长，不按样本数计算；
 - 有效驱动区间要求信号有限、电池电压和整组 Supply Current 为正、Leader Stator Current 为正，并满足 `Pmech + Pcu ≤ 1.1 × Pbat + 1 W`；零 Stator、再生制动、非有限或物理不可能区间保留在覆盖率与原因分布中，但不进入效率或推荐；负 Stator 只表示再生制动工况，不证明电池发生净回充；
 - Kraken X44/X60 普通/FOC 模型使用 CTRE 12 V dyno 曲线的 `R/Kt/Kv/I0`。机械功率以 `Iload=max(Istator-I0,0)` 估算，绕组铜耗仍使用总 Stator Current 的 `n×Istator²×R`；
@@ -60,13 +60,13 @@ WPILOG record 时间用于对稀疏字段做 sample-and-hold，`sampleTimestampU
 
 ### 电池电压响应代理
 
-“电池”页只对 V2 数据开放。输入是 `robot/batteryVoltageVolts` 和 `robot/supplyCurrentAmps`；后者仅为已注册物理电机 Supply Current 合计，绝不当作 PDH/PDP 整机总电流。页面首先显示共享电池电压时间图；基础统计按异步 sample-and-hold 并集和真实 `dt` 计算时间加权电压、正向输入 Wh/Ah、`I²t`、最低电压、实际低压和 Brownout 事件。
+“电池”页只对 V2 数据开放。输入是 `robot/batteryVoltageVolts` 和本日志选定的 canonical 电流；页面必须明确显示“PDH/PDP 整机总电流”或“已注册电机合计电流”来源。基础统计按异步 sample-and-hold 并集和真实 `dt` 计算时间加权电压、正向输入 Wh/Ah、`I²t`、最低电压、实际低压和 Brownout 事件。
 
-局部窗口使用稳健线性拟合 `V≈Vintercept-Req×Iregistered`，同时保留电流激励范围、残差和时变 `Req`；电压－电流分布按真实 `dt` 加权分箱，显示中位数、P25–P75 和观测时长。弱激励、斜率方向不符或样本不足时分别降级为不可用。`Req` 只能称为“相对于已注册电机负载的局部等效压降系数”，因为它混合了电池、线束、连接器、动态恢复和未记录负载；页面不输出真实内阻、SOC、容量、整机总 Wh、净回充或修改减速比后的电压/Brownout 反事实。
+局部窗口使用稳健线性拟合 `V≈Vintercept-Req×Icanonical`，同时保留电流激励范围、残差和时变 `Req`；电压－电流分布按真实 `dt` 加权分箱，显示中位数、P25–P75 和观测时长。弱激励、斜率方向不符或样本不足时分别降级为不可用。无论电流来自整机还是已注册电机，`Req` 都只能称为“当前电流口径下的局部等效压降系数”，因为它混合了电池、线束、连接器、动态恢复和采样误差；页面不输出真实内阻、SOC、容量、净回充或修改减速比后的电压/Brownout 反事实。
 
 ## Supply Current 限流历史回放估算
 
-估算器使用当前共享时间范围和已解析的 EnergyLogger V2 typed arrays，不修改原始数据。唯一合法目标是 V2 Manifest 中的一台 Leader 及其全部直接 Followers；Follower 只贡献自己的 Supply Current，不单独成为目标。输入上限表示该电机组记录的**合计 Supply Current**，不是单台电机控制器的上限。合法 Manifest 已保证每台电机只属于一个 Leader 组，因此多个目标天然互不重叠，只需拒绝重复的 `motorGroupId`。V1 没有 Manifest，模拟页必须明确显示不可用，不能退回 canonical 子系统节点猜测电机组。
+估算器使用当前共享时间范围和已解析的 EnergyLogger V2 typed arrays，不修改原始数据。唯一合法目标是 V2 Manifest 中的一台 Leader 及其全部直接 Followers；Follower 只贡献自己的 Supply Current，不单独成为目标。supply-only Leader 及其 Followers 同样可作为目标。输入上限表示该电机组记录的**合计 Supply Current**，不是单台电机控制器的上限。合法 Manifest 已保证每台电机只属于一个 Leader 组，因此多个目标天然互不重叠，只需拒绝重复的 `motorGroupId`。V1 没有 Manifest，模拟页必须明确显示不可用，不能退回 canonical 子系统节点猜测电机组。
 
 对于目标电机组记录的合计电流 `I`、功率 `P` 和上限 `L`，按 sample-and-hold 在每个时间点计算比例：
 
@@ -93,7 +93,7 @@ P' = P * s
 - Worker 在返回结果或错误后立即终止；解析结果需要的 typed arrays 通过 transferable 移交，不复制大块时序数据。
 - WPILOG decoder 对大 Blob/File 使用内部窗口并保留跨窗口残片；常规时间戳走精确 `number` 热路径，只有超出安全整数时回退 BigInt。
 - PWA manifest 图标与 Workbox 预缓存只登记一次。`pnpm bundle:check` 检查上传初始依赖图、ECharts、静态资源、预缓存 Brotli 体积以及重复或缺失 URL。
-- `pnpm vendordep:contract` 直接解析 Java vendordep 生成的 v2.3 WPILOG，检查跨语言 Manifest、packed 槽、signed Stator Current、`rad/s` 原生转速、基础重建和三项高级分析。
+- `pnpm vendordep:contract` 直接解析 Java vendordep 生成的 v2.4 WPILOG，检查跨语言 Manifest、nullable supply-only、packed 槽、可选整机总电流、signed Current、`rad/s` 原生转速、基础重建、高级分析降级和限流回放。
 
 当前纯 TypeScript decoder 已在三份真实日志上达到约 30%–32% 的解析改进，超过本轮性能门槛；因此没有引入 WASM。只有后续基准证明剩余 CPU 瓶颈足以覆盖跨边界复制、构建链和兼容性成本时，才单独评估 WASM。
 

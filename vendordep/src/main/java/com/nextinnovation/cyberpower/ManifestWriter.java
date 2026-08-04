@@ -1,6 +1,6 @@
 package com.nextinnovation.cyberpower;
 
-/** Writes the immutable EnergyLogger v2.3 manifest once at configuration freeze. */
+/** Writes the immutable EnergyLogger v2.4 manifest once at configuration freeze. */
 final class ManifestWriter {
   private final StringBuilder output = new StringBuilder(1024);
 
@@ -38,10 +38,17 @@ final class ManifestWriter {
     output.append("{\"name\":");
     string(motor.name);
     output.append(",\"type\":");
-    string(motor.type.name());
-    output
-        .append(",\"analysisReduction\":")
-        .append(Double.toString(motor.analysisReduction));
+    if (motor.type == null) {
+      output.append("null");
+    } else {
+      string(motor.type.name());
+    }
+    output.append(",\"analysisReduction\":");
+    if (motor.analysisReduction == null) {
+      output.append("null");
+    } else {
+      output.append(Double.toString(motor.analysisReduction));
+    }
     output.append(",\"leader\":");
     if (motor.leaderName == null) {
       output.append("null");
