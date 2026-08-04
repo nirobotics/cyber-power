@@ -91,6 +91,12 @@ function resultBuffers(result: AnalysisResult): ArrayBuffer[] {
       dataset.v2.robotBatteryVoltageVolts.timestampsUs.buffer as ArrayBuffer,
       dataset.v2.robotBatteryVoltageVolts.values.buffer as ArrayBuffer,
     );
+    if (dataset.v2.robotTotalSupplyCurrentAmps) {
+      buffers.push(
+        dataset.v2.robotTotalSupplyCurrentAmps.timestampsUs.buffer as ArrayBuffer,
+        dataset.v2.robotTotalSupplyCurrentAmps.values.buffer as ArrayBuffer,
+      );
+    }
     for (const subsystem of dataset.v2.subsystems) {
       buffers.push(
         subsystem.sampleTimestampUs.timestampsUs.buffer as ArrayBuffer,
@@ -170,18 +176,22 @@ describe("log analysis worker handler", () => {
   });
 
   it("transfers every fixed v2 timestamp, scalar, state-time, and packed buffer once", async () => {
-    const fixture = buildEnergyV2Fixture();
+    const fixture = buildEnergyV2Fixture(undefined, "2.4", {
+      includeTotalSupplyCurrent: true,
+    });
     appendEnergyV2FixtureSample(
       fixture,
       1_000_000,
       { drive: "DRIVE", indexer: "IDLE" },
       1,
+      { robotTotalCurrentA: 30 },
     );
     appendEnergyV2FixtureSample(
       fixture,
       2_000_000,
       { drive: "DRIVE", indexer: "FEED" },
       2,
+      { robotTotalCurrentA: 35 },
     );
     const result = await analyzeWpiLog(fixture.builder.build());
     const expectedBuffers = new Set(resultBuffers(result));

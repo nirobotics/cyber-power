@@ -12,6 +12,12 @@ import {
   deriveEnergyLoggerV2Core,
   deriveEnergyLoggerV2MotorGroupElectricalSeries,
 } from "./v2-metrics";
+import type { EnergyLoggerV2MotorGroupMetrics } from "./v2-metrics";
+
+function requireAnalyzable(group: EnergyLoggerV2MotorGroupMetrics | undefined) {
+  if (!group?.analysisAvailable) throw new Error("expected analyzable motor group");
+  return group;
+}
 
 describe("minimal EnergyLogger V2 metrics", () => {
   it("derives one strict Supply Current series per Manifest Leader group", async () => {
@@ -63,17 +69,45 @@ describe("minimal EnergyLogger V2 metrics", () => {
     }
     const dataset = await parseEnergyLog(fixture.builder.build());
     const analysis = analyzeEnergyLoggerV2Range(dataset);
-    const group = analysis?.subsystems.find((subsystem) => subsystem.name === "drive")
-      ?.motorGroups[0];
+    const group = requireAnalyzable(analysis?.subsystems.find(
+      (subsystem) => subsystem.name === "drive",
+    )?.motorGroups[0]);
 
     expect(group).toMatchObject({
+      analysisAvailable: true,
       leaderName: "frontLeft",
       motorNames: ["frontLeft", "frontRight"],
       motorCount: 2,
       analysisReduction: 6.75,
     });
-    expect(group?.efficiency.available).toBe(true);
-    expect(group?.gearRatio.available).toBe(true);
+    expect(group.efficiency.available).toBe(true);
+    expect(group.gearRatio.available).toBe(true);
+  });
+
+  it("keeps supply-only groups in electrical metrics but marks advanced analysis unavailable", async () => {
+    const fixture = buildEnergyV2Fixture(
+      "/Team9999/SupplyOnlyOutputs/energyLogger",
+      "2.4",
+      { supplyOnlyIndexer: true },
+    );
+    appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "IDLE", indexer: "FEED" }, 0);
+    appendEnergyV2FixtureSample(fixture, 2_000_000, { drive: "IDLE", indexer: "FEED" }, 0);
+    const dataset = await parseEnergyLog(fixture.builder.build());
+
+    const electrical = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)!;
+    const indexerElectrical = electrical.find((group) => group.subsystemName === "indexer");
+    expect(indexerElectrical?.motorType).toBeNull();
+    expect(indexerElectrical?.currentA.values).toEqual(Float64Array.from([5, 5]));
+
+    const indexerAnalysis = analyzeEnergyLoggerV2Range(dataset)?.subsystems.find(
+      (subsystem) => subsystem.name === "indexer",
+    )?.motorGroups[0];
+    expect(indexerAnalysis).toMatchObject({
+      analysisAvailable: false,
+      unavailableReason: "SUPPLY_ONLY",
+      motorType: null,
+      analysisReduction: null,
+    });
   });
 
   it("produces equivalent motor analysis for 2.1 RPS and 2.2 rad/s logs", async () => {
@@ -122,20 +156,20 @@ describe("minimal EnergyLogger V2 metrics", () => {
 
     const dataset = await parseEnergyLog(fixture.builder.build());
     expect(dataset.v2?.subsystems[0].motorSamples.values[1]).toBe(-20);
-    const group = analyzeEnergyLoggerV2Range(dataset)?.subsystems.find(
+    const group = requireAnalyzable(analyzeEnergyLoggerV2Range(dataset)?.subsystems.find(
       (subsystem) => subsystem.name === "drive",
-    )?.motorGroups[0];
-    expect(group?.efficiency.available).toBe(true);
-    if (group?.efficiency.available) {
+    )?.motorGroups[0]);
+    expect(group.efficiency.available).toBe(true);
+    if (group.efficiency.available) {
       expect(group.efficiency.quality.validIntervalCount).toBe(50);
       expect(group.efficiency.quality.coverageFraction).toBeCloseTo(0.5, 12);
     }
-    expect(group?.coverage.coverageFraction).toBeCloseTo(0.5, 12);
-    expect(group?.coverage.durationSecondsByStatus[
+    expect(group.coverage.coverageFraction).toBeCloseTo(0.5, 12);
+    expect(group.coverage.durationSecondsByStatus[
       MOTOR_COVERAGE_STATUS.REGENERATIVE_STATOR_CURRENT
     ]).toBeCloseTo(1, 12);
-    expect(group?.gearRatio.available).toBe(true);
-    if (group?.gearRatio.available) {
+    expect(group.gearRatio.available).toBe(true);
+    if (group.gearRatio.available) {
       expect(group.gearRatio.activeSampleCount).toBe(50);
       expect(group.gearRatio.activeDurationSeconds).toBeCloseTo(1, 12);
     }
@@ -170,24 +204,23 @@ describe("minimal EnergyLogger V2 metrics", () => {
       .doubleArray(entries["s1.samples"], 3_000_000, indexerSamples);
 
     const dataset = await parseEnergyLog(builder.build());
-    const group = analyzeEnergyLoggerV2Range(dataset, {
+    const group = requireAnalyzable(analyzeEnergyLoggerV2Range(dataset, {
       startUs: 1_250_000,
       endUs: 2_750_000,
-    })?.subsystems.find((subsystem) => subsystem.name === "drive")?.motorGroups[0];
+    })?.subsystems.find((subsystem) => subsystem.name === "drive")?.motorGroups[0]);
 
-    expect(group).toBeDefined();
-    expect(Array.from(group!.coverage.boundariesUs)).toEqual([
+    expect(Array.from(group.coverage.boundariesUs)).toEqual([
       1_250_000,
       2_000_000,
       2_750_000,
     ]);
-    expect(Array.from(group!.coverage.statusCodes)).toEqual([
+    expect(Array.from(group.coverage.statusCodes)).toEqual([
       MOTOR_COVERAGE_STATUS.VALID,
       MOTOR_COVERAGE_STATUS.PHYSICALLY_IMPOSSIBLE,
     ]);
-    expect(group!.coverage.totalDurationSeconds).toBeCloseTo(1.5, 12);
-    expect(group!.coverage.validDurationSeconds).toBeCloseTo(0.75, 12);
-    expect(group!.coverage.coverageFraction).toBeCloseTo(0.5, 12);
+    expect(group.coverage.totalDurationSeconds).toBeCloseTo(1.5, 12);
+    expect(group.coverage.validDurationSeconds).toBeCloseTo(0.75, 12);
+    expect(group.coverage.coverageFraction).toBeCloseTo(0.5, 12);
   });
 
   it("does not count expected follower Stator and rotor slots as missing", async () => {
@@ -243,16 +276,16 @@ describe("minimal EnergyLogger V2 metrics", () => {
     }
 
     const dataset = await parseEnergyLog(builder.build());
-    const group = analyzeEnergyLoggerV2Range(dataset)?.subsystems.find(
+    const group = requireAnalyzable(analyzeEnergyLoggerV2Range(dataset)?.subsystems.find(
       (subsystem) => subsystem.name === "drive",
-    )?.motorGroups[0];
+    )?.motorGroups[0]);
 
-    expect(group?.efficiency).toEqual({ available: false, reason: "NO_VALID_INTERVALS" });
-    expect(group?.coverage.coverageFraction).toBe(0);
-    expect(Array.from(group?.coverage.statusCodes ?? [])).toEqual([
+    expect(group.efficiency).toEqual({ available: false, reason: "NO_VALID_INTERVALS" });
+    expect(group.coverage.coverageFraction).toBe(0);
+    expect(Array.from(group.coverage.statusCodes)).toEqual([
       MOTOR_COVERAGE_STATUS.NONFINITE_SIGNAL,
     ]);
-    expect(group?.coverage.durationSecondsByStatus[
+    expect(group.coverage.durationSecondsByStatus[
       MOTOR_COVERAGE_STATUS.NONFINITE_SIGNAL
     ]).toBe(1);
   });

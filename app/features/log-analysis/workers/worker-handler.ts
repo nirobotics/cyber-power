@@ -43,6 +43,7 @@ function collectTransferables(result: AnalysisResult): Transferable[] {
   if (dataset.v2) {
     addSeries(dataset.v2.robotSampleTimestampUs);
     addSeries(dataset.v2.robotSupplyCurrentAmps);
+    addSeries(dataset.v2.robotTotalSupplyCurrentAmps);
     addSeries(dataset.v2.robotBatteryVoltageVolts);
     for (const subsystem of dataset.v2.subsystems) {
       addSeries(subsystem.sampleTimestampUs);

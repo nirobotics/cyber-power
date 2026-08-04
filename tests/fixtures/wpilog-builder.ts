@@ -235,14 +235,14 @@ export function appendEnergySample(
 export interface EnergyV2Fixture {
   builder: WpiLogFixtureBuilder;
   root: string;
-  contractVersion: "2.1" | "2.2" | "2.3";
+  contractVersion: "2.1" | "2.2" | "2.3" | "2.4";
   manifest: {
     subsystems: Array<{
       name: string;
       motors: Array<{
         name: string;
-        type: "NEO";
-        analysisReduction: number;
+        type: "NEO" | null;
+        analysisReduction: number | null;
         leader: string | null;
       }>;
     }>;
@@ -253,7 +253,8 @@ export interface EnergyV2Fixture {
 /** A valid fixed-contract V2 fixture with no v1 dynamic energy tree. */
 export function buildEnergyV2Fixture(
   root = "/Team9999/RealOutputs/energyLogger",
-  contractVersion: "2.1" | "2.2" | "2.3" = "2.2",
+  contractVersion: "2.1" | "2.2" | "2.3" | "2.4" = "2.2",
+  options: { includeTotalSupplyCurrent?: boolean; supplyOnlyIndexer?: boolean } = {},
 ): EnergyV2Fixture {
   const builder = new WpiLogFixtureBuilder();
   const manifest: EnergyV2Fixture["manifest"] = {
@@ -280,8 +281,8 @@ export function buildEnergyV2Fixture(
         motors: [
           {
             name: "belt",
-            type: "NEO",
-            analysisReduction: 1,
+            type: options.supplyOnlyIndexer ? null : "NEO",
+            analysisReduction: options.supplyOnlyIndexer ? null : 1,
             leader: null,
           },
         ],
@@ -298,6 +299,9 @@ export function buildEnergyV2Fixture(
   start("manifest", "manifest", "string");
   start("robotTimestamp", "robot/sampleTimestampUs", "int64");
   start("robotCurrent", "robot/supplyCurrentAmps", "double");
+  if (options.includeTotalSupplyCurrent) {
+    start("robotTotalCurrent", "robot/totalSupplyCurrentAmps", "double");
+  }
   start("robotVoltage", "robot/batteryVoltageVolts", "double");
   for (const id of ["s0", "s1"]) {
     start(`${id}.sampleTimestampUs`, `subsystems/${id}/sampleTimestampUs`, "int64");
@@ -320,6 +324,7 @@ export function appendEnergyV2FixtureSample(
     driveStatorCurrentA?: number;
     indexerStatorCurrentA?: number;
     robotCurrentA?: number;
+    robotTotalCurrentA?: number;
     robotVoltageV?: number;
     driveLeaderSupplyCurrentA?: number;
     driveFollowerSupplyCurrentA?: number;
@@ -347,8 +352,19 @@ export function appendEnergyV2FixtureSample(
     .string(entries["s1.state"], timestampUs, state.indexer)
     .doubleArray(entries["s1.samples"], timestampUs, [
       options.indexerSupplyCurrentA ?? 5,
-      options.indexerStatorCurrentA ?? 8,
-      indexerRotorVelocity,
+      fixture.manifest.subsystems[1].motors[0].type === null
+        ? Number.NaN
+        : options.indexerStatorCurrentA ?? 8,
+      fixture.manifest.subsystems[1].motors[0].type === null
+        ? Number.NaN
+        : indexerRotorVelocity,
     ]);
+  if (entries.robotTotalCurrent !== undefined) {
+    builder.double(
+      entries.robotTotalCurrent,
+      timestampUs,
+      options.robotTotalCurrentA ?? options.robotCurrentA ?? 25,
+    );
+  }
   void energyWh;
 }

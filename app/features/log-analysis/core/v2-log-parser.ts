@@ -94,6 +94,7 @@ function parseEntryName(name: string): ParsedName | undefined {
     ["manifest", { canonical: "manifest", type: "string" }],
     ["robot/sampletimestampus", { canonical: "robot/sampleTimestampUs", type: "int64" }],
     ["robot/supplycurrentamps", { canonical: "robot/supplyCurrentAmps", type: "double" }],
+    ["robot/totalsupplycurrentamps", { canonical: "robot/totalSupplyCurrentAmps", type: "double" }],
     ["robot/batteryvoltagevolts", { canonical: "robot/batteryVoltageVolts", type: "double" }],
   ]);
   const fixedEntry = fixed.get(relativeLower);
@@ -382,6 +383,23 @@ export class EnergyLoggerV2Collector {
     const robotTimestamp = required("robot/sampleTimestampUs", "int64");
     const robotCurrent = required("robot/supplyCurrentAmps", "double");
     const robotVoltage = required("robot/batteryVoltageVolts", "double");
+    let robotTotalCurrent: RawEntry | undefined;
+    if (contract.contractVersion === "2.4") {
+      const entry = root.entries.get("robot/totalSupplyCurrentAmps");
+      if (entry) {
+        if (!validType(entry)) {
+          issues.push(
+            issue("V2_ENTRY_TYPE_MISMATCH", `${entry.name} must be double`, entry.name, {
+              declaredTypes: [...entry.types],
+            }),
+          );
+        } else if (entry.numericValues.view().length === 0) {
+          issues.push(issue("V2_ENTRY_MISSING", `${entry.name} contains no data records`, entry.name));
+        } else {
+          robotTotalCurrent = entry;
+        }
+      }
+    }
     const subsystemRows: Array<{
       id: string;
       timestamp?: RawEntry;
@@ -410,13 +428,14 @@ export class EnergyLoggerV2Collector {
         for (let rowIndex = 0; rowIndex < samples.widths.length; rowIndex += 1) {
           for (let motorIndex = 0; motorIndex < subsystem.motors.length; motorIndex += 1) {
             const motor = subsystem.motors[motorIndex];
-            if (motor.leader === null) continue;
+            if (motor.leader === null && motor.type !== null) continue;
             const offset = rowIndex * width + motorIndex * 3;
             if (!Number.isNaN(values[offset + 1]) || !Number.isNaN(values[offset + 2])) {
+              const supplyOnly = motor.type === null;
               issues.push(
                 issue(
-                  "V2_FOLLOWER_SLOT_INVALID",
-                  `${samples.name} follower ${motor.name} must use NaN Stator Current and rotor velocity slots`,
+                  supplyOnly ? "V2_SUPPLY_ONLY_SLOT_INVALID" : "V2_FOLLOWER_SLOT_INVALID",
+                  `${samples.name} ${supplyOnly ? "supply-only motor" : "follower"} ${motor.name} must use NaN Stator Current and rotor velocity slots`,
                   samples.name,
                   { rowIndex, motor: motor.name },
                 ),
@@ -457,6 +476,10 @@ export class EnergyLoggerV2Collector {
         contract,
         robotSampleTimestampUs: sampleTimestampSeries(robotTimestamp),
         robotSupplyCurrentAmps: numericSeries(robotCurrent, "A"),
+        ...(robotTotalCurrent
+          ? { robotTotalSupplyCurrentAmps: numericSeries(robotTotalCurrent, "A") }
+          : {}),
+        robotCurrentSource: robotTotalCurrent ? "robot-total" : "registered-motors",
         robotBatteryVoltageVolts: numericSeries(robotVoltage, "V"),
         subsystems,
       },

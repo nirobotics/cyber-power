@@ -64,6 +64,34 @@ function copiedValues(dataset: EnergyLogDataset): number[][] {
 }
 
 describe("Manifest motor-group Supply current limit estimator", () => {
+  it("includes a V2.4 supply-only group as a normal limit target", async () => {
+    const fixture = buildEnergyV2Fixture(
+      "/Team9999/SupplyOnlyOutputs/energyLogger",
+      "2.4",
+      { supplyOnlyIndexer: true },
+    );
+    for (let index = 1; index <= 3; index += 1) {
+      appendEnergyV2FixtureSample(
+        fixture,
+        index * 1_000_000,
+        { drive: "IDLE", indexer: "FEED" },
+        0,
+        { indexerSupplyCurrentA: 5 },
+      );
+    }
+    const dataset = await parseEnergyLog(fixture.builder.build());
+    const indexerId = groupId(dataset, "indexer");
+    const result = estimateSupplyCurrentLimits(dataset, {
+      limits: [{ motorGroupId: indexerId, limitA: 3 }],
+    });
+
+    expect(result.targets[0]).toMatchObject({
+      motorType: null,
+      baseline: { peakCurrentA: 5 },
+      estimated: { peakCurrentA: 3 },
+    });
+  });
+
   it("limits one Leader group using Leader plus Follower Supply Current", async () => {
     const dataset = await buildV2Dataset();
     const driveId = groupId(dataset, "drive");

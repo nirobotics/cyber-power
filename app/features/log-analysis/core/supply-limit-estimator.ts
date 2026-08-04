@@ -469,6 +469,7 @@ export function estimateSupplyCurrentLimits(
   options: SupplyLimitEstimateOptions,
 ): SupplyLimitEstimate {
   const validationIssues = validateSupplyCurrentLimits(dataset, options.limits);
+  const currentScope = dataset.robotCurrentSource === "robot-total" ? "整机" : "已注册电机";
   if (validationIssues.length > 0) throw new SupplyLimitValidationError(validationIssues);
   const groups = deriveEnergyLoggerV2MotorGroupElectricalSeries(dataset)!;
   const groupsById = new Map(groups.map((group) => [group.id, group]));
@@ -645,7 +646,7 @@ export function estimateSupplyCurrentLimits(
     if (target.sawNonfinite) {
       target.warnings.push(warning(
         "SOURCE_NONFINITE_DROPPED",
-        `${groupLabel(target.group)} 存在不完整样本；对应区间保持原整机值，不参与扣减。`,
+        `${groupLabel(target.group)} 存在不完整样本；对应区间保持原${currentScope}值，不参与扣减。`,
         target.group.id,
       ));
     }
@@ -707,7 +708,7 @@ export function estimateSupplyCurrentLimits(
   if (!baselineRange.quality.reconciliation.withinTolerance) {
     globalWarnings.push(warning(
       "SOURCE_RECONCILIATION_MISMATCH",
-      "当前范围内整机能量数据不调和，整机估算不可用。",
+      `当前范围内${currentScope}能量数据不调和，${currentScope}估算不可用。`,
       undefined,
       { ...baselineRange.quality.reconciliation },
     ));
@@ -717,7 +718,7 @@ export function estimateSupplyCurrentLimits(
   if (!robotEstimateAvailable) {
     globalWarnings.push(warning(
       "ROBOT_ESTIMATE_UNAVAILABLE",
-      "电机组扣减后无法与整机数据可靠调和；保留逐电机组结果，但整机估算不可用。",
+      `电机组扣减后无法与${currentScope}数据可靠调和；保留逐电机组结果，但${currentScope}估算不可用。`,
       undefined,
       { reasons: [...unavailableReasons].sort() },
     ));

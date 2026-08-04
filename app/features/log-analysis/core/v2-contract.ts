@@ -1,6 +1,6 @@
 export const ENERGY_LOGGER_V2_SUPPORTED_MAJOR = 2;
-export const ENERGY_LOGGER_V2_SUPPORTED_MINOR = 3;
-export const ENERGY_LOGGER_V2_SUPPORTED_VERSIONS = ["2.1", "2.2", "2.3"] as const;
+export const ENERGY_LOGGER_V2_SUPPORTED_MINOR = 4;
+export const ENERGY_LOGGER_V2_SUPPORTED_VERSIONS = ["2.1", "2.2", "2.3", "2.4"] as const;
 
 export type EnergyLoggerV2ContractVersion =
   (typeof ENERGY_LOGGER_V2_SUPPORTED_VERSIONS)[number];
@@ -31,9 +31,10 @@ export type EnergyLoggerV2MotorType = (typeof ENERGY_LOGGER_V2_MOTOR_TYPES)[numb
 
 export interface EnergyLoggerV2MotorDescriptor {
   name: string;
-  type: EnergyLoggerV2MotorType;
+  /** Null together with analysisReduction for a supply-only motor. */
+  type: EnergyLoggerV2MotorType | null;
   /** Motor rotations per mechanism rotation. This is never inferred from controller feedback ratios. */
-  analysisReduction: number;
+  analysisReduction: number | null;
   /** Null for a leader/independent motor; otherwise the leader name in this subsystem. */
   leader: string | null;
 }
@@ -247,25 +248,44 @@ export function parseEnergyLoggerV2Contract(
               });
             }
             motorNames.add(name);
-            if (!nonblank(rawMotor.type) || !MOTOR_TYPES.has(rawMotor.type)) {
+            const supplyOnly = rawMotor.type === null && rawMotor.analysisReduction === null;
+            if (supplyOnly && input.contractVersion !== "2.4") {
               issues.push({
-                code: "V2_MANIFEST_UNKNOWN_MOTOR_TYPE",
-                message: `Unknown motor type: ${String(rawMotor.type)}`,
-                path: `${motorPath}.type`,
+                code: "V2_MANIFEST_INVALID",
+                message: `${motorPath} may use null type and analysisReduction only in contract 2.4`,
+                path: motorPath,
               });
               return;
             }
-            if (
-              typeof rawMotor.analysisReduction !== "number" ||
-              !Number.isFinite(rawMotor.analysisReduction) ||
-              rawMotor.analysisReduction <= 0
-            ) {
+            if ((rawMotor.type === null) !== (rawMotor.analysisReduction === null)) {
               issues.push({
-                code: "V2_MANIFEST_INVALID_RATIO",
-                message: `${motorPath}.analysisReduction must be finite and greater than zero`,
-                path: `${motorPath}.analysisReduction`,
+                code: "V2_MANIFEST_INVALID",
+                message: `${motorPath}.type and analysisReduction must either both be null or both be set`,
+                path: motorPath,
               });
               return;
+            }
+            if (!supplyOnly) {
+              if (!nonblank(rawMotor.type) || !MOTOR_TYPES.has(rawMotor.type)) {
+                issues.push({
+                  code: "V2_MANIFEST_UNKNOWN_MOTOR_TYPE",
+                  message: `Unknown motor type: ${String(rawMotor.type)}`,
+                  path: `${motorPath}.type`,
+                });
+                return;
+              }
+              if (
+                typeof rawMotor.analysisReduction !== "number" ||
+                !Number.isFinite(rawMotor.analysisReduction) ||
+                rawMotor.analysisReduction <= 0
+              ) {
+                issues.push({
+                  code: "V2_MANIFEST_INVALID_RATIO",
+                  message: `${motorPath}.analysisReduction must be finite and greater than zero`,
+                  path: `${motorPath}.analysisReduction`,
+                });
+                return;
+              }
             }
             if (rawMotor.leader !== null && !nonblank(rawMotor.leader)) {
               issues.push({
@@ -277,8 +297,8 @@ export function parseEnergyLoggerV2Contract(
             }
             motors.push({
               name,
-              type: rawMotor.type as EnergyLoggerV2MotorType,
-              analysisReduction: rawMotor.analysisReduction,
+              type: supplyOnly ? null : rawMotor.type as EnergyLoggerV2MotorType,
+              analysisReduction: supplyOnly ? null : rawMotor.analysisReduction as number,
               leader: rawMotor.leader === null ? null : rawMotor.leader.trim(),
             });
           });

@@ -1,21 +1,25 @@
 import { Crosshair } from "lucide-react";
 import type { RangeAnalysis } from "../log-analysis/core";
+import type { RobotCurrentSource } from "../log-analysis/core/types";
 import { formatDuration, formatNumber } from "./format";
 
 export function MetricsRail({
   analysis,
   sourceContract,
+  robotCurrentSource,
   onLocatePeakPower,
   onLocatePeakCurrent,
 }: {
   analysis: RangeAnalysis;
   sourceContract?: "v1" | "v2";
+  robotCurrentSource?: RobotCurrentSource;
   onLocatePeakPower: () => void;
   onLocatePeakCurrent: () => void;
 }) {
   const { totals } = analysis;
   const hasPeakPower = Number.isFinite(totals.peakPowerW);
   const hasPeakCurrent = Number.isFinite(totals.peakCurrentA);
+  const v2Prefix = robotCurrentSource === "registered-motors" ? "已注册电机" : "整机";
   const metrics: Array<{
     label: string;
     value: string;
@@ -25,24 +29,24 @@ export function MetricsRail({
   }> = [
     { label: "有效持续时间", value: formatDuration(totals.effectiveDurationSeconds) },
     {
-      label: sourceContract === "v2" ? "整机能量" : "总能量",
+      label: sourceContract === "v2" ? `${v2Prefix}能量` : "总能量",
       value: `${formatNumber(totals.energyWh, 3)} Wh`,
     },
     {
-      label: sourceContract === "v2" ? "整机平均功率" : "平均功率",
+      label: sourceContract === "v2" ? `${v2Prefix}平均功率` : "平均功率",
       value: `${formatNumber(totals.averagePowerW, 1)} W`,
     },
     {
-      label: sourceContract === "v2" ? "整机峰值功率" : "峰值功率",
+      label: sourceContract === "v2" ? `${v2Prefix}峰值功率` : "峰值功率",
       value: hasPeakPower ? `${formatNumber(totals.peakPowerW, 1)} W` : "无可用数据",
       onClick: hasPeakPower ? onLocatePeakPower : undefined,
-      hint: sourceContract === "v2" ? "定位整机峰值功率时间" : "定位峰值功率时间",
+      hint: sourceContract === "v2" ? `定位${v2Prefix}峰值功率时间` : "定位峰值功率时间",
     },
     {
-      label: sourceContract === "v2" ? "整机峰值电流" : "峰值电流",
+      label: sourceContract === "v2" ? `${v2Prefix}峰值电流` : "峰值电流",
       value: hasPeakCurrent ? `${formatNumber(totals.peakCurrentA, 1)} A` : "无可用数据",
       onClick: hasPeakCurrent ? onLocatePeakCurrent : undefined,
-      hint: sourceContract === "v2" ? "定位整机峰值电流时间" : "定位峰值电流时间",
+      hint: sourceContract === "v2" ? `定位${v2Prefix}峰值电流时间` : "定位峰值电流时间",
     },
     {
       label: "最低电压",

@@ -109,9 +109,10 @@ const ROBOT_LEGEND_ITEMS = [
 
 function robotMetricLabel(dataset: EnergyLogDataset, metric: RobotMetric, fallback: string): string {
   if (dataset.sourceContract !== "v2") return fallback;
-  if (metric === "current") return "整机电流";
-  if (metric === "power") return "整机功率";
-  if (metric === "energy") return "整机累计能量";
+  const prefix = dataset.robotCurrentSource === "robot-total" ? "整机" : "已注册电机";
+  if (metric === "current") return `${prefix}电流`;
+  if (metric === "power") return `${prefix}功率`;
+  if (metric === "energy") return `${prefix}累计能量`;
   return fallback;
 }
 
@@ -494,7 +495,7 @@ export function createRobotTimelineOption(
       stepped: true,
     },
     current: {
-      label: dataset.sourceContract === "v2" ? "整机电流" : "总电流",
+      label: robotMetricLabel(dataset, "current", "总电流"),
       unit: "A",
       color: COLORS.current,
       id: "total-current",

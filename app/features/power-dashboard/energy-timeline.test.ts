@@ -365,9 +365,10 @@ describe("robot timeline cards", () => {
     expect(batteryMarkup.match(/h-\[300px\] min-h-\[260px\]/g)).toHaveLength(1);
   });
 
-  it("labels V2 current, power, and energy as whole-robot metrics without duplicate prefixes", () => {
+  it("labels V2 current, power, and energy using the declared current source", () => {
     const dataset = robotDataset();
     dataset.sourceContract = "v2";
+    dataset.robotCurrentSource = "registered-motors";
     const markup = renderToStaticMarkup(createElement(RobotTimeline, {
       dataset,
       range: { startUs: 0, endUs: 1_000_000 },
@@ -378,10 +379,11 @@ describe("robot timeline cards", () => {
       onCursorCommit: () => undefined,
     }));
 
-    expect(markup).toContain("整机电流");
-    expect(markup).toContain("整机功率");
-    expect(markup).toContain("整机累计能量");
-    expect(markup).not.toContain("整机整机");
+    expect(markup).toContain("已注册电机电流");
+    expect(markup).toContain("已注册电机功率");
+    expect(markup).toContain("已注册电机累计能量");
+
+    dataset.robotCurrentSource = "robot-total";
     expect(createRobotTimelineOption(dataset, "power", "dark", "power")).toMatchObject({
       series: [expect.objectContaining({ name: "整机功率" })],
     });

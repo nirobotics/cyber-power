@@ -66,7 +66,7 @@ class WpilibDataLogSinkTest {
   }
 
   @Test
-  void generatesStandaloneV23FixtureWithIndependentSubsystemClocks() throws Exception {
+  void generatesStandaloneV24FixtureWithIndependentSubsystemClocks() throws Exception {
     Path fixture =
         Path.of("build", "generated-fixtures", "cyber-power-v2.wpilog").toAbsolutePath();
     Files.createDirectories(fixture.getParent());
@@ -79,15 +79,16 @@ class WpilibDataLogSinkTest {
     double[] driveVelocity = {70.0};
     double[] shooterCurrent = {0.0};
 
-    try (DataLogWriter writer = new DataLogWriter(fixture.toString(), "CyberPowerV23")) {
+    try (DataLogWriter writer = new DataLogWriter(fixture.toString(), "CyberPowerV24")) {
       WpilibDataLogSink sink = new WpilibDataLogSink(writer);
       EnergyLogger logger =
           EnergyLogger.getInstance()
               .registerLogSink(sink)
               .registerTimeSource(clock::get)
-              .registerBatteryVoltageSource(() -> batteryVoltage[0]);
+              .registerBatteryVoltageSource(() -> batteryVoltage[0])
+              .registerRobotTotalCurrentSource(() -> 71.0);
       EnergySubsystem drive = logger.createSubsystem("drive");
-      drive.registerLeaderMotor(
+      drive.registerMotor(
           "leftLeader",
           MotorType.NEO,
           6.75,
@@ -97,13 +98,13 @@ class WpilibDataLogSinkTest {
           () -> driveVelocity[0]);
       drive.registerFollowerMotor(
           "leftFollower",
-          MotorType.NEO,
-          6.75,
           "leftLeader",
           () -> true,
           () -> followerCurrent[0]);
+      drive.registerMotor("intake", () -> true, () -> 5.0);
+      drive.registerFollowerMotor("intakeFollower", "intake", () -> true, () -> 4.0);
       EnergySubsystem shooter = logger.createSubsystem("shooter");
-      shooter.registerLeaderMotor(
+      shooter.registerMotor(
           "flywheel",
           MotorType.KRAKEN_X60_FOC,
           1.25,
@@ -152,11 +153,15 @@ class WpilibDataLogSinkTest {
 
     DecodedLog log = readWhenRecordCount(fixture, "fixture/end", 1);
     assertTrue(log.valid);
-    assertEquals("CyberPowerV23", log.extraHeader);
-    assertEquals("2.3", onlyValue(log, "energyLogger/contractVersion"));
-    assertEquals("2026.2.2", onlyValue(log, "energyLogger/libraryVersion"));
+    assertEquals("CyberPowerV24", log.extraHeader);
+    assertEquals("2.4", onlyValue(log, "energyLogger/contractVersion"));
+    assertEquals(
+        System.getProperty("cyberPower.version"),
+        onlyValue(log, "energyLogger/libraryVersion"));
     assertStart(log, "energyLogger/robot/batteryVoltageVolts", "double", "{\"units\":\"V\"}");
     assertStart(log, "energyLogger/robot/supplyCurrentAmps", "double", "{\"units\":\"A\"}");
+    assertStart(
+        log, "energyLogger/robot/totalSupplyCurrentAmps", "double", "{\"units\":\"A\"}");
     assertStart(log, "energyLogger/subsystems/s0/motors/samples", "double[]", "{\"units\":\"\"}");
     assertEquals(
         List.of(1_000_000L, 1_173_000L, 1_877_000L),
@@ -168,9 +173,26 @@ class WpilibDataLogSinkTest {
         List.of(1_061_000L, 1_231_000L, 1_433_000L, 2_117_000L),
         timestamps(log, "energyLogger/robot/sampleTimestampUs"));
     assertArrayEquals(
-        new double[] {-3.0, -48.0, 20.0, -2.0, Double.NaN, Double.NaN},
+        new double[] {
+          -3.0,
+          -48.0,
+          20.0,
+          -2.0,
+          Double.NaN,
+          Double.NaN,
+          5.0,
+          Double.NaN,
+          Double.NaN,
+          4.0,
+          Double.NaN,
+          Double.NaN
+        },
         (double[]) lastValue(log, "energyLogger/subsystems/s0/motors/samples"));
-    assertEquals(4.0, (double) lastValue(log, "energyLogger/robot/supplyCurrentAmps"), 1.0e-9);
+    assertEquals(13.0, (double) lastValue(log, "energyLogger/robot/supplyCurrentAmps"), 1.0e-9);
+    assertEquals(
+        71.0,
+        (double) lastValue(log, "energyLogger/robot/totalSupplyCurrentAmps"),
+        1.0e-9);
     assertEquals(
         12.2,
         (double) lastValue(log, "energyLogger/robot/batteryVoltageVolts"),

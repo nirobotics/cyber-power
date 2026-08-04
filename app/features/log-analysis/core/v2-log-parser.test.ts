@@ -21,6 +21,8 @@ describe("fixed EnergyLogger V2 parser", () => {
     const dataset = await parseEnergyLog(fixture.builder.build());
 
     expect(dataset.sourceContract).toBe("v2");
+    expect(dataset.robotCurrentSource).toBe("registered-motors");
+    expect(dataset.v2?.robotCurrentSource).toBe("registered-motors");
     expect(dataset.v2?.contract.contractVersion).toBe("2.2");
     expect(dataset.v2?.subsystems[0].motorSamples.width).toBe(6);
     expect(dataset.v2?.subsystems[0].motorSamples.values).toEqual(
@@ -43,6 +45,59 @@ describe("fixed EnergyLogger V2 parser", () => {
     expect(dataset.series.totalPowerW.values).toEqual(Float64Array.from([300, 300]));
     expect(dataset.series.totalEnergyWh.values.at(-1)).toBeCloseTo(300 / 3600, 8);
     expect(dataset.subsystems.map((node) => node.id)).toEqual(["drive", "indexer"]);
+  });
+
+  it("uses the optional V2.4 whole-robot current for the canonical series", async () => {
+    const fixture = buildEnergyV2Fixture(
+      "/Team9999/TotalOutputs/energyLogger",
+      "2.4",
+      { includeTotalSupplyCurrent: true },
+    );
+    appendEnergyV2FixtureSample(
+      fixture,
+      1_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      0,
+      { robotCurrentA: 25, robotTotalCurrentA: 40 },
+    );
+    appendEnergyV2FixtureSample(
+      fixture,
+      2_000_000,
+      { drive: "DRIVE", indexer: "IDLE" },
+      0,
+      { robotCurrentA: 25, robotTotalCurrentA: Number.NaN },
+    );
+
+    const dataset = await parseEnergyLog(fixture.builder.build());
+    expect(dataset.robotCurrentSource).toBe("robot-total");
+    expect(dataset.v2?.robotCurrentSource).toBe("robot-total");
+    expect(dataset.v2?.robotSupplyCurrentAmps.values).toEqual(Float64Array.from([25, 25]));
+    expect(dataset.v2?.robotTotalSupplyCurrentAmps?.values).toEqual(
+      Float64Array.from([40, Number.NaN]),
+    );
+    expect(dataset.series.totalCurrentA.values).toEqual(Float64Array.from([40, Number.NaN]));
+  });
+
+  it("keeps V2.4 supply-only motors in the fixed packed transport", async () => {
+    const fixture = buildEnergyV2Fixture(
+      "/Team9999/SupplyOnlyOutputs/energyLogger",
+      "2.4",
+      { supplyOnlyIndexer: true },
+    );
+    appendEnergyV2FixtureSample(fixture, 1_000_000, { drive: "DRIVE", indexer: "FEED" }, 0);
+    appendEnergyV2FixtureSample(fixture, 2_000_000, { drive: "DRIVE", indexer: "FEED" }, 0);
+
+    const dataset = await parseEnergyLog(fixture.builder.build());
+    expect(dataset.v2?.subsystems[1].motors[0]).toMatchObject({
+      type: null,
+      analysisReduction: null,
+    });
+    expect(dataset.v2?.subsystems[1].motorSamples.values).toEqual(
+      Float64Array.from([5, Number.NaN, Number.NaN, 5, Number.NaN, Number.NaN]),
+    );
+    expect(dataset.subsystems.find((node) => node.id === "indexer")?.currentA.values).toEqual(
+      Float64Array.from([5, 5]),
+    );
   });
 
   it("normalizes 2.1 RPS and keeps native 2.2/2.3 rad/s equivalent", async () => {

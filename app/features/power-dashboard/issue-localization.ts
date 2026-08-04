@@ -42,6 +42,7 @@ const ISSUE_DESCRIPTIONS: Record<LogIssueCode, string> = {
   V2_SAMPLE_TIMESTAMP_INVALID: "EnergyLogger v2 样本时间戳无效。",
   V2_SAMPLE_TIMESTAMP_ROLLBACK: "EnergyLogger v2 样本时间发生回退。",
   V2_FOLLOWER_SLOT_INVALID: "EnergyLogger V2 Follower 的 Stator Current 或原生转速槽不是 NaN。",
+  V2_SUPPLY_ONLY_SLOT_INVALID: "EnergyLogger V2 Supply-only 电机的 Stator Current 或原生转速槽不是 NaN。",
 };
 
 function detailText(value: unknown): string | undefined {

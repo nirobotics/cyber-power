@@ -1,7 +1,7 @@
 {
   "name": "cyber-power",
   "private": true,
-  "version": "2026.2.2",
+  "version": "2026.2.3",
   "type": "module",
   "scripts": {
     "dev": "react-router dev",

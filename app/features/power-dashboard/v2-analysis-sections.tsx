@@ -83,9 +83,9 @@ export function V2AnalysisSections({
                 </thead>
                 <tbody className="divide-y divide-line">
                   {groups.map(({ subsystem, group }) => {
-                    const expanded = expandedGroupIds.has(group.id);
+                    const expanded = group.analysisAvailable && expandedGroupIds.has(group.id);
                     const followers = followerMotorNames(group);
-                    const recommendation = group.gearRatio;
+                    const recommendation = group.analysisAvailable ? group.gearRatio : null;
                     const detailsId = `motor-details-${encodeURIComponent(group.id)}`;
                     return (
                       <Fragment key={group.id}>
@@ -97,10 +97,11 @@ export function V2AnalysisSections({
                             <button
                               type="button"
                               className="flex max-w-[260px] items-start gap-1.5 rounded text-left outline-none focus-visible:ring-2 focus-visible:ring-brand/50"
-                              aria-expanded={expanded}
+                              aria-expanded={group.analysisAvailable ? expanded : undefined}
                               aria-controls={detailsId}
                               aria-label={`${expanded ? "收起" : "展开"} ${subsystem.name}/${group.leaderName} 的电机分析详情`}
                               onClick={() => toggleGroup(group.id)}
+                              disabled={!group.analysisAvailable}
                             >
                               {expanded ? (
                                 <ChevronDown className="mt-0.5 size-3.5 shrink-0 text-brand" aria-hidden />
@@ -117,47 +118,58 @@ export function V2AnalysisSections({
                                     {followers.join("、")}
                                   </span>
                                 ) : null}
+                                {!group.analysisAvailable ? (
+                                  <span className="block whitespace-normal text-[10px] text-warn">
+                                    Supply-only：未记录电机模型、Stator Current 与转速，高级分析不可用
+                                  </span>
+                                ) : null}
                               </span>
                             </button>
                           </td>
-                          <td className="px-3 py-2.5 align-top font-mono text-ink-dim">{group.motorType}</td>
+                          <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
+                            {group.motorType ?? "Supply-only"}
+                          </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
                             {group.motorCount}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink">
-                            {group.efficiency.available &&
+                            {group.analysisAvailable && group.efficiency.available &&
                             group.efficiency.metrics.estimatedDriveEfficiency !== null
                               ? `${formatNumber(group.efficiency.metrics.estimatedDriveEfficiency * 100, 1)}%`
                               : "不可用"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
-                            {formatNumber(group.coverage.coverageFraction * 100, 1)}%
+                            {group.analysisAvailable
+                              ? `${formatNumber(group.coverage.coverageFraction * 100, 1)}%`
+                              : "不可用"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
-                            {formatNumber(group.analysisReduction, 2)}
+                            {group.analysisAvailable
+                              ? formatNumber(group.analysisReduction, 2)
+                              : "不可用"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink">
-                            {recommendation.available
+                            {recommendation?.available
                               ? formatNumber(recommendation.recommendedRatio, 2)
                               : "不可用"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
-                            {recommendation.available
+                            {recommendation?.available
                               ? formatNumber(recommendation.currentCopperLossWh, 4)
                               : "—"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
-                            {recommendation.available
+                            {recommendation?.available
                               ? formatNumber(recommendation.recommendedCopperLossWh, 4)
                               : "—"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink">
-                            {recommendation.available
+                            {recommendation?.available
                               ? copperChangeLabel(recommendation.estimatedCopperReductionWh, "Wh")
                               : "—"}
                           </td>
                           <td className="px-3 py-2.5 align-top font-mono text-ink">
-                            {recommendation.available
+                            {recommendation?.available
                               ? copperChangeLabel(
                                   recommendation.reductionShareOfMeasuredInput * 100,
                                   "%",
@@ -165,7 +177,7 @@ export function V2AnalysisSections({
                               : "—"}
                           </td>
                         </tr>
-                        {expanded ? (
+                        {expanded && group.analysisAvailable ? (
                           <tr id={detailsId}>
                             <td colSpan={12} className="bg-surface-2/30 px-4 py-3">
                               <MotorAnalysisDetails group={group} />
@@ -192,7 +204,12 @@ export function V2AnalysisSections({
   );
 }
 
-function MotorAnalysisDetails({ group }: { group: EnergyLoggerV2MotorGroupMetrics }) {
+type AnalyzableMotorGroup = Extract<
+  EnergyLoggerV2MotorGroupMetrics,
+  { analysisAvailable: true }
+>;
+
+function MotorAnalysisDetails({ group }: { group: AnalyzableMotorGroup }) {
   const coverage = group.coverage;
   const reasons = coverageReasonRows(coverage);
   return (
@@ -227,7 +244,7 @@ function MotorAnalysisDetails({ group }: { group: EnergyLoggerV2MotorGroupMetric
   );
 }
 
-export function GearRatioEvidence({ group }: { group: EnergyLoggerV2MotorGroupMetrics }) {
+export function GearRatioEvidence({ group }: { group: AnalyzableMotorGroup }) {
   const recommendation = group.gearRatio;
   if (!recommendation.available) {
     return (

@@ -1,6 +1,7 @@
 import { AlertTriangle, CircleHelp, Trash2 } from "lucide-react";
 import { useMemo, useRef, useState } from "react";
 import type { SupplyLimitEstimate } from "../log-analysis/core";
+import type { RobotCurrentSource } from "../log-analysis/core/types";
 import { formatDuration, formatNumber } from "./format";
 import { ToggleSwitch } from "./toggle-switch";
 
@@ -10,7 +11,7 @@ export interface SupplyLimitTargetOption {
   subsystemName: string;
   leaderName: string;
   motorNames: readonly string[];
-  motorType: string;
+  motorType: string | null;
   motorCount: number;
   peakCurrentA: number;
   peakPowerW: number;
@@ -39,6 +40,7 @@ export interface SupplyLimitSimulatorProps {
   errors: readonly SupplyLimitDisplayError[];
   estimate: SupplyLimitEstimate | null;
   simulationEnabled: boolean;
+  robotCurrentSource?: RobotCurrentSource;
   unavailableReason?: string;
   onSimulationEnabledChange: (enabled: boolean) => void;
   onUpdateDraft: (motorGroupId: string, patch: SupplyLimitDraftPatch) => void;
@@ -69,12 +71,14 @@ export function SupplyLimitSimulator({
   errors,
   estimate,
   simulationEnabled,
+  robotCurrentSource,
   unavailableReason,
   onSimulationEnabledChange,
   onUpdateDraft,
   onClear,
 }: SupplyLimitSimulatorProps) {
   const rows = useMemo(() => buildSupplyLimitTableRows(targets), [targets]);
+  const currentScope = robotCurrentSource === "registered-motors" ? "已注册电机" : "整机";
   const targetById = useMemo(
     () => new Map(targets.map((target) => [target.id, target])),
     [targets],
@@ -113,7 +117,7 @@ export function SupplyLimitSimulator({
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line px-4 py-3">
           <div className="flex items-center gap-2">
             <h2 className="text-sm font-semibold text-ink">明细</h2>
-            <SupplyLimitHelp />
+            <SupplyLimitHelp currentScope={currentScope} />
           </div>
           <div className="flex items-center gap-2">
             <ToggleSwitch
@@ -166,7 +170,7 @@ export function SupplyLimitSimulator({
                   <th className="px-3 py-2.5 font-semibold">电机型号</th>
                   <th className="px-3 py-2.5 font-semibold">数量</th>
                   <th className="px-3 py-2.5 font-semibold">能量</th>
-                  <th className="px-3 py-2.5 font-semibold">相对整机正向输入</th>
+                  <th className="px-3 py-2.5 font-semibold">相对{currentScope}正向输入</th>
                   <th className="px-3 py-2.5 font-semibold">平均功率</th>
                   <th className="px-3 py-2.5 font-semibold">峰值功率</th>
                   <th className="px-3 py-2.5 font-semibold">峰值电流</th>
@@ -213,7 +217,9 @@ export function SupplyLimitSimulator({
                           </span>
                         ) : null}
                       </td>
-                      <td className="px-3 py-2.5 align-top font-mono text-ink-dim">{target.motorType}</td>
+                      <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
+                        {target.motorType ?? "Supply-only"}
+                      </td>
                       <td className="px-3 py-2.5 align-top font-mono text-ink-dim">{target.motorCount}</td>
                       <td className="px-3 py-2.5 align-top font-mono text-ink">{formatNumber(target.energyWh, 4)} Wh</td>
                       <td className="px-3 py-2.5 align-top font-mono text-ink-dim">
@@ -274,12 +280,20 @@ export function SupplyLimitSimulator({
         ) : null}
       </section>
 
-      {simulationEnabled && estimate ? <SupplyLimitResults estimate={estimate} /> : null}
+      {simulationEnabled && estimate
+        ? <SupplyLimitResults estimate={estimate} currentScope={currentScope} />
+        : null}
     </div>
   );
 }
 
-function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
+function SupplyLimitResults({
+  estimate,
+  currentScope,
+}: {
+  estimate: SupplyLimitEstimate;
+  currentScope: "整机" | "已注册电机";
+}) {
   const { totals } = estimate;
   const globalWarnings = estimate.warnings.filter(
     (warning) => warning.motorGroupId === undefined,
@@ -290,10 +304,10 @@ function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
         <h2 id="supply-limit-results-title" className="text-sm font-semibold text-ink">报告</h2>
       </div>
       <div className="grid divide-y divide-line sm:grid-cols-2 sm:divide-x sm:divide-y-0 xl:grid-cols-4">
-        <ComparisonMetric label="整机总能量" baseline={totals.baseline.energyWh} estimated={totals.estimated?.energyWh} unit="Wh" digits={3} />
-        <ComparisonMetric label="整机峰值电流" baseline={totals.baseline.peakCurrentA} estimated={totals.estimated?.peakCurrentA} unit="A" digits={1} />
-        <ComparisonMetric label="整机峰值功率" baseline={totals.baseline.peakPowerW} estimated={totals.estimated?.peakPowerW} unit="W" digits={1} />
-        <ComparisonMetric label="整机平均功率" baseline={totals.baseline.averagePowerW} estimated={totals.estimated?.averagePowerW} unit="W" digits={1} />
+        <ComparisonMetric label={`${currentScope}总能量`} baseline={totals.baseline.energyWh} estimated={totals.estimated?.energyWh} unit="Wh" digits={3} />
+        <ComparisonMetric label={`${currentScope}峰值电流`} baseline={totals.baseline.peakCurrentA} estimated={totals.estimated?.peakCurrentA} unit="A" digits={1} />
+        <ComparisonMetric label={`${currentScope}峰值功率`} baseline={totals.baseline.peakPowerW} estimated={totals.estimated?.peakPowerW} unit="W" digits={1} />
+        <ComparisonMetric label={`${currentScope}平均功率`} baseline={totals.baseline.averagePowerW} estimated={totals.estimated?.averagePowerW} unit="W" digits={1} />
       </div>
       <div className="grid border-t border-line sm:grid-cols-2 lg:grid-cols-4">
         <ResultValue label={totals.robotEstimateAvailable ? "预计节省能量" : "各电机组节省量合计"} value={`${formatNumber(totals.energySavedWh, 3)} Wh`} />
@@ -304,7 +318,7 @@ function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
       {!totals.robotEstimateAvailable ? (
         <div className="flex items-start gap-2 border-t border-warn/40 bg-warn/5 px-4 py-3 text-xs text-warn" role="status">
           <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
-          电机组与整机数据无法可靠调和；逐电机组结果仍可查看，整机估算不可用。
+          电机组与{currentScope}数据无法可靠调和；逐电机组结果仍可查看，{currentScope}估算不可用。
         </div>
       ) : null}
       <div className="overflow-x-auto border-t border-line">
@@ -358,7 +372,7 @@ function SupplyLimitResults({ estimate }: { estimate: SupplyLimitEstimate }) {
   );
 }
 
-function SupplyLimitHelp() {
+function SupplyLimitHelp({ currentScope }: { currentScope: "整机" | "已注册电机" }) {
   const [open, setOpen] = useState(false);
   const pointerTypeRef = useRef<string | null>(null);
   return (
@@ -408,7 +422,7 @@ function SupplyLimitHelp() {
           <ul className="list-disc space-y-1 pl-4">
             <li>输入值是一台 Leader 与其全部 Followers 的合计 Supply Current 上限，不是单个电机控制器的限流配置。</li>
             <li>Follower 自动归入对应 Leader 电机组，不会作为独立限流目标重复计算。</li>
-            <li>“相对整机正向输入”是该组正向输入能量与整机正向输入能量的比值；整机电流会先汇总有符号电流，回生可能抵消其他电机组的输入，因此各行比值不可相加，合计也可能超过 100%。</li>
+            <li>“相对{currentScope}正向输入”是该组正向输入能量与{currentScope}正向输入能量的比值；{currentScope}电流会先汇总有符号电流，回生可能抵消其他电机组的输入，因此各行比值不可相加，合计也可能超过 100%。</li>
             <li>模拟按历史正向 Supply Current 的限流比例缩放该组功率与能量，保留原动作时长和电池电压轨迹。</li>
             <li>报告不会改动原图表，也不重新预测最低电压、Brownout、Stator Current、扭矩、温升或机构动作结果。</li>
           </ul>

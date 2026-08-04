@@ -43,7 +43,7 @@ class EnergyLoggerTest {
   }
 
   @Test
-  void writesOnlyTheMinimalV23Contract() {
+  void writesTheMinimalV24Contract() {
     double[] leaderCurrent = {10.0};
     double[] leaderStator = {-42.0};
     double[] leaderVelocity = {-75.0};
@@ -51,7 +51,7 @@ class EnergyLoggerTest {
     double[] shooterCurrent = {3.0};
 
     EnergySubsystem drive = logger.createSubsystem("drive");
-    drive.registerLeaderMotor(
+    drive.registerMotor(
         "frontLeft",
         MotorType.NEO,
         6.75,
@@ -60,10 +60,10 @@ class EnergyLoggerTest {
         () -> leaderStator[0],
         () -> leaderVelocity[0]);
     drive.registerFollowerMotor(
-        "frontRight", MotorType.NEO, 6.75, "frontLeft", () -> true, () -> followerCurrent[0]);
+        "frontRight", "frontLeft", () -> true, () -> followerCurrent[0]);
 
     EnergySubsystem shooter = logger.createSubsystem("shooter");
-    shooter.registerLeaderMotor(
+    shooter.registerMotor(
         "flywheel",
         MotorType.KRAKEN_X60_FOC,
         1.5,
@@ -78,7 +78,7 @@ class EnergyLoggerTest {
     clock.set(1_200_000L);
     logger.periodicRobot();
 
-    assertEquals("2.3", sink.last("energyLogger/contractVersion").value());
+    assertEquals("2.4", sink.last("energyLogger/contractVersion").value());
     assertEquals(
         System.getProperty("cyberPower.version"),
         sink.last("energyLogger/libraryVersion").value());
@@ -135,6 +135,50 @@ class EnergyLoggerTest {
   }
 
   @Test
+  void writesSupplyOnlyMotorGroupWithNullAnalysisMetadata() {
+    EnergySubsystem subsystem = logger.createSubsystem("intake");
+    subsystem.registerMotor("leader", () -> true, () -> 7.0);
+    subsystem.registerFollowerMotor("follower", "leader", () -> true, () -> -2.0);
+
+    subsystem.periodic("RUNNING");
+    logger.periodicRobot();
+
+    assertEquals(
+        "{\"subsystems\":[{\"name\":\"intake\",\"motors\":["
+            + "{\"name\":\"leader\",\"type\":null,\"analysisReduction\":null,"
+            + "\"leader\":null},"
+            + "{\"name\":\"follower\",\"type\":null,\"analysisReduction\":null,"
+            + "\"leader\":\"leader\"}]}]}",
+        sink.last("energyLogger/manifest").value());
+    assertArrayEquals(
+        new double[] {7.0, Double.NaN, Double.NaN, -2.0, Double.NaN, Double.NaN},
+        samples("energyLogger/subsystems/s0/motors/samples"));
+    assertEquals(5.0, (double) sink.last("energyLogger/robot/supplyCurrentAmps").value(), EPSILON);
+  }
+
+  @Test
+  void writesOptionalSignedRobotTotalCurrentAndNormalizesNonfiniteValues() {
+    double[] totalCurrent = {-8.0};
+    logger.registerRobotTotalCurrentSource(() -> totalCurrent[0]);
+    EnergySubsystem subsystem = logger.createSubsystem("drive");
+    subsystem.registerMotor("motor", () -> true, () -> 1.0);
+    subsystem.periodic("READY");
+
+    logger.periodicRobot();
+    assertEquals(
+        -8.0,
+        (double) sink.last("energyLogger/robot/totalSupplyCurrentAmps").value(),
+        EPSILON);
+
+    totalCurrent[0] = Double.POSITIVE_INFINITY;
+    clock.incrementAndGet();
+    logger.periodicRobot();
+    assertTrue(
+        Double.isNaN(
+            (double) sink.last("energyLogger/robot/totalSupplyCurrentAmps").value()));
+  }
+
+  @Test
   void samplesEachSupplierOnceAndPreservesPackedSlots() {
     AtomicInteger leaderConnectedCalls = new AtomicInteger();
     AtomicInteger followerConnectedCalls = new AtomicInteger();
@@ -144,7 +188,7 @@ class EnergyLoggerTest {
     AtomicInteger followerCalls = new AtomicInteger();
 
     EnergySubsystem subsystem = logger.createSubsystem("arm");
-    subsystem.registerLeaderMotor(
+    subsystem.registerMotor(
         "pivot",
         MotorType.KRAKEN_X44_FOC,
         5.0,
@@ -166,8 +210,6 @@ class EnergyLoggerTest {
         });
     subsystem.registerFollowerMotor(
         "pivotFollower",
-        MotorType.KRAKEN_X44_FOC,
-        5.0,
         "pivot",
         () -> {
           followerConnectedCalls.incrementAndGet();
@@ -205,7 +247,7 @@ class EnergyLoggerTest {
     AtomicInteger numericCalls = new AtomicInteger();
 
     EnergySubsystem subsystem = logger.createSubsystem("arm");
-    subsystem.registerLeaderMotor(
+    subsystem.registerMotor(
         "pivot",
         MotorType.KRAKEN_X44_FOC,
         5.0,
@@ -218,8 +260,6 @@ class EnergyLoggerTest {
         () -> numericCalls.incrementAndGet());
     subsystem.registerFollowerMotor(
         "pivotFollower",
-        MotorType.KRAKEN_X44_FOC,
-        5.0,
         "pivot",
         () -> {
           followerConnectedCalls.incrementAndGet();
@@ -249,44 +289,31 @@ class EnergyLoggerTest {
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            drive.registerLeaderMotor(
+            drive.registerMotor(
                 "invalid", MotorType.NEO, 0.0, () -> true, () -> 1.0, () -> 1.0, () -> 1.0));
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            drive.registerFollowerMotor(
-                "early", MotorType.NEO, 1.0, "missing", () -> true, () -> 1.0));
+            drive.registerFollowerMotor("early", "missing", () -> true, () -> 1.0));
 
-    drive.registerLeaderMotor(
+    drive.registerMotor(
         "leader", MotorType.NEO, 6.75, () -> true, () -> 1.0, () -> 2.0, () -> 3.0);
+    drive.registerFollowerMotor("follower", "leader", () -> true, () -> 1.0);
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            drive.registerFollowerMotor(
-                "wrongType", MotorType.NEO_550, 6.75, "leader", () -> true, () -> 1.0));
+            drive.registerFollowerMotor("chain", "follower", () -> true, () -> 1.0));
     assertThrows(
         IllegalArgumentException.class,
         () ->
-            drive.registerFollowerMotor(
-                "wrongRatio", MotorType.NEO, 6.76, "leader", () -> true, () -> 1.0));
-    drive.registerFollowerMotor(
-        "follower", MotorType.NEO, 6.75, "leader", () -> true, () -> 1.0);
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            drive.registerFollowerMotor(
-                "chain", MotorType.NEO, 6.75, "follower", () -> true, () -> 1.0));
-    assertThrows(
-        IllegalArgumentException.class,
-        () ->
-            drive.registerLeaderMotor(
+            drive.registerMotor(
                 "leader", MotorType.NEO, 6.75, () -> true, () -> 1.0, () -> 1.0, () -> 1.0));
 
     drive.periodic("READY");
     assertThrows(
         IllegalStateException.class,
         () ->
-            drive.registerLeaderMotor(
+            drive.registerMotor(
                 "late", MotorType.NEO, 1.0, () -> true, () -> 1.0, () -> 1.0, () -> 1.0));
     assertThrows(
         IllegalStateException.class,
@@ -301,7 +328,7 @@ class EnergyLoggerTest {
             .registerTimeSource(clock::get)
             .registerBatteryVoltageSource(() -> 12.0);
     EnergySubsystem noSinkSubsystem = noSink.createSubsystem("drive");
-    noSinkSubsystem.registerLeaderMotor(
+    noSinkSubsystem.registerMotor(
         "motor", MotorType.NEO, 1.0, () -> true, () -> 1.0, () -> 1.0, () -> 1.0);
     assertThrows(IllegalStateException.class, noSink::periodicRobot);
 
@@ -309,7 +336,7 @@ class EnergyLoggerTest {
     EnergyLogger noBattery =
         EnergyLogger.getInstance().registerLogSink(sink).registerTimeSource(clock::get);
     EnergySubsystem noBatterySubsystem = noBattery.createSubsystem("drive");
-    noBatterySubsystem.registerLeaderMotor(
+    noBatterySubsystem.registerMotor(
         "motor", MotorType.NEO, 1.0, () -> true, () -> 1.0, () -> 1.0, () -> 1.0);
     assertThrows(IllegalStateException.class, noBattery::periodicRobot);
 
@@ -334,7 +361,7 @@ class EnergyLoggerTest {
   @Test
   void acceptsSafeEqualTimestampsAndRejectsRollback() {
     EnergySubsystem subsystem = logger.createSubsystem("drive");
-    subsystem.registerLeaderMotor(
+    subsystem.registerMotor(
         "motor", MotorType.NEO, 1.0, () -> true, () -> 1.0, () -> 2.0, () -> 3.0);
     subsystem.periodic("ONE");
     subsystem.periodic("TWO");
@@ -353,7 +380,7 @@ class EnergyLoggerTest {
             .registerTimeSource(maximum::get)
             .registerBatteryVoltageSource(() -> 12.0);
     EnergySubsystem maxSubsystem = maxLogger.createSubsystem("drive");
-    maxSubsystem.registerLeaderMotor(
+    maxSubsystem.registerMotor(
         "motor", MotorType.NEO, 1.0, () -> true, () -> 1.0, () -> 2.0, () -> 3.0);
     maxSubsystem.periodic("READY");
     maxLogger.periodicRobot();
