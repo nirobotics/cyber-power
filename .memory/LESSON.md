@@ -10,8 +10,6 @@
 - Vercel 的 React Router 项目必须把 Framework Preset 设为 `react-router`；设为 `Other` 时构建表面成功但只上传静态文件，所有应用路由都会是平台级 404。
 - Tailwind 4 全局样式在 React Router/Vercel 中应从 root 使用 `import "./app.css"`；`app.css?url` 会在 client 与 SSR 环境分别生成不同 CSS URL并触发 React 19 hydration #418。
 - Supabase `apply_migration` 会按执行时刻登记远端版本号；应用 live migration 后应把本地 migration 文件时间戳对齐到该版本，避免后续 `db push` 重复执行同一 DDL。
-- Cyber Parts 的飞书 OAuth state、PKCE、组织校验、服务端 Cookie session 和 Supabase `user_profiles` 模式可复用；其服务端 Cookie 本身不提供离线认证，Cyber Power 的离线使用需由 PWA 静态壳和独立的本地授权策略处理。
-- 离线导航缓存不能包含 SSR 用户姓名、头像或稳定身份 ID；在线 loader 只返回无身份的已认证壳，用户资料另由 NetworkOnly 的 `/api/auth/me` 获取。离线权限的剩余边界是同一浏览器配置持有最多 7 天的私有导航缓存。
 - 真实样例末尾最后一条 record 缺 33 bytes，属于可恢复尾截断；恢复必须停在 `lastGoodOffset=62513066`，不能把中段损坏也降级成 warning。
 - 旧版 NI EnergyLogger 可能用单个尾随 `/` 标记聚合节点（如 `swerve/`）；动态路径规范化只应忽略这个尾随标记并保留原始路径，前导/重复分隔符、尾随连字符及与无尾随路径的规范化冲突仍必须拒绝。
 - ECharts 多图共享游标时，`updateAxisPointer` 不能只传 `xAxisIndex/value`；应传真实像素 `x/y` 与 `axesInfo`，并在程序化同步期间抑制回写事件，否则会出现游标往返跳变。React 侧的高频游标更新还应通过 `requestAnimationFrame` 合并为每帧一次。

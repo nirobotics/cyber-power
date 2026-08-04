@@ -64,14 +64,13 @@ export default defineConfig({
           {
             urlPattern: ({ url }) =>
               url.origin === self.location.origin &&
-              (url.pathname.startsWith("/auth/") || url.pathname.startsWith("/api/")),
+              url.pathname.startsWith("/api/"),
             handler: "NetworkOnly",
           },
           {
             urlPattern: ({ request, url }) =>
               (request.mode === "navigate" || request.headers.get("accept")?.includes("text/html")) &&
               url.origin === self.location.origin &&
-              !url.pathname.startsWith("/auth/") &&
               !url.pathname.startsWith("/api/"),
             handler: "NetworkFirst",
             options: {

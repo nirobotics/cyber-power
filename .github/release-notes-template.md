@@ -8,7 +8,7 @@
 - 发布经过 Web、Java、跨语言契约、bundle 和不可变制品校验。
 - EnergyLogger 数据契约：`{{CONTRACT_VERSION}}`
 - WPILib：`{{WPILIB_VERSION}}`
-- Maven：`com.nextinnovation.cyberpower:cyberpower-java:{{VERSION}}`
+- Maven：`com.team8214.cyberpower:cyberpower-java:{{VERSION}}`
 
 {{BOOTSTRAP_NOTE}}
 

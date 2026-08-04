@@ -126,7 +126,7 @@ pnpm vendordep:contract
 - CTRE Kraken X44/X60 曲线常数、空载损耗电流、同区间铜耗积分、电机覆盖率分类、异步电池电压事件、精确选区端点、长于 4096 区间的全量 `dt` 评分、Leader/Follower 名称和独立“电机”页；
 - V2 电池页的异步 sample-and-hold、非均匀 `dt`、正向 Wh/Ah、`I²t`、局部稳健拟合、独立负载阶跃、弱激励降级、Robot Mode 条件统计、低压与 Brownout 实测事件；
 - V1-only 不显示 V2 Card；V2 电流、功率和能量指标按日志明确标为整机或已注册电机口径；
-- 飞书登录、session、tenant、Supabase server-only 数据边界与离线缓存；
+- 匿名首页、无认证路由与公开离线缓存；
 - 图表共享游标、尖峰保留、子系统显隐、电池局部代理时间序列和模拟页报告。
 
 ## 性能与体积门禁

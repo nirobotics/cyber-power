@@ -1,18 +1,12 @@
 import { RefreshCw, Zap } from "lucide-react";
 import { NavLink } from "react-router";
 import { ThemeToggle } from "./theme-toggle";
-import { UserStatus } from "./user-status";
-import type { PublicUser } from "../lib/auth-types";
 
 export function AppHeader({
   centerTitle,
-  user,
-  authLoading,
   onReplaceFile,
 }: {
   centerTitle?: string | null;
-  user: PublicUser | null;
-  authLoading: boolean;
   onReplaceFile?: (() => void) | null;
 }) {
   return (
@@ -47,7 +41,6 @@ export function AppHeader({
               </button>
             ) : null}
             <ThemeToggle className="shrink-0" />
-            <UserStatus user={user} loading={authLoading} />
           </div>
         </div>
         {centerTitle ? (

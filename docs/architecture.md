@@ -11,7 +11,7 @@
   -> 按需加载的 ECharts、指标卡和表格
 ```
 
-原始日志、解析后的时序数据和区间选择都留在浏览器设备上。服务端不接收日志，Supabase 不存储日志或分析结果。
+原始日志、解析后的时序数据和区间选择都留在浏览器设备上。服务端不接收日志或分析结果。
 
 ## WPILOG 与 EnergyLogger
 
@@ -88,7 +88,7 @@ P' = P * s
 
 ## 加载与性能边界
 
-- 上传页只加载文件选择、认证壳和 Worker 协议；分析完成后才按需加载 Dashboard 与 ECharts。
+- 上传页只加载文件选择和 Worker 协议；分析完成后才按需加载 Dashboard 与 ECharts。
 - ECharts 只注册折线、网格、提示、缩放、状态背景与 Canvas 渲染所需模块，不引用全量入口。
 - Worker 在返回结果或错误后立即终止；解析结果需要的 typed arrays 通过 transferable 移交，不复制大块时序数据。
 - WPILOG decoder 对大 Blob/File 使用内部窗口并保留跨窗口残片；常规时间戳走精确 `number` 热路径，只有超出安全整数时回退 BigInt。
@@ -97,53 +97,15 @@ P' = P * s
 
 当前纯 TypeScript decoder 已在三份真实日志上达到约 30%–32% 的解析改进，超过本轮性能门槛；因此没有引入 WASM。只有后续基准证明剩余 CPU 瓶颈足以覆盖跨边界复制、构建链和兼容性成本时，才单独评估 WASM。
 
-## 飞书认证
-
-认证路由：
-
-- `POST /auth/login`：生成 state、PKCE S256 verifier/challenge，跳转飞书 OAuth v2；
-- `GET /auth/feishu/callback`：先校验 state，再换取用户信息并校验 tenant key；
-- `POST /auth/logout`：同源退出，清 Cookie 和私有导航缓存；
-- `GET /api/auth/me`：只返回 `displayName` 与 `avatarUrl`。
-
-服务端 session Cookie 在生产使用 `__Host-cyber_power_session`，属性为 Secure、HttpOnly、SameSite=Lax、Path=/，有效期 14 天。飞书 token 不持久化。
-
-Supabase 只保存 `public.user_profiles` 身份映射。RLS 与 FORCE RLS 开启；`anon` 和 `authenticated` 无表权限、无 policy；`service_role` 只有 SELECT、INSERT、UPDATE。浏览器 bundle 中没有 Supabase client 或 secret。
-
 ## 离线边界
 
-Service Worker 对 `/auth/**` 和 `/api/**` 使用 NetworkOnly，不缓存认证响应。静态资源预缓存；已认证的普通导航壳使用 NetworkFirst，离线保存最多 7 天。
-
-SSR loader 在线时仍要求有效 session，但返回给浏览器和缓存的 hydration data 不含用户身份。离线授权的实际边界是“同一浏览器配置中存在未过期的私有导航缓存”。退出按钮会先删除该缓存，再向服务端 POST 清除 Cookie。
-
-限制：
-
-- 组织成员被移除或 session 被撤销时，已缓存设备在断网期间无法即时获知；
-- 离线退出可以立即删除本地壳，但若网络 POST 未成功，服务端 Cookie 会在重新联网后仍保持到过期或下一次成功退出；
-- 不在公共或共享浏览器配置中启用离线使用。
-
-## 环境变量
-
-全部变量只配置在服务端/Vercel，不写入仓库：
-
-| 变量 | 作用 |
-|---|---|
-| `APP_ORIGIN` | 生产必须是 `https://power.team8214.com` |
-| `FEISHU_APP_ID` | 飞书应用 ID |
-| `FEISHU_APP_SECRET` | 飞书应用 secret |
-| `FEISHU_REDIRECT_URI` | 生产固定 callback URL |
-| `FEISHU_ALLOWED_TENANT_KEY` | 允许的 NI Robotics tenant |
-| `SESSION_SECRET` | 至少 32 字符的随机 Cookie 签名 secret |
-| `SUPABASE_URL` | Supabase 项目 URL |
-| `SUPABASE_SECRET_KEY` | server-only Supabase secret key |
-
-`FEISHU_AUTH_SCOPES` 可选。任何 secret 都不得使用 `VITE_` 前缀。
+Service Worker 对 `/api/**` 使用 NetworkOnly。静态资源预缓存，公开导航页使用 NetworkFirst 并保存最多 7 天。
 
 ## 部署验收
 
 1. `pnpm install --frozen-lockfile`。
 2. `pnpm typecheck && pnpm lint && pnpm test && pnpm build && pnpm bundle:check && pnpm vendordep:contract`。
-3. Vercel Git Integration 指向私有仓库 `nirobotics/cyber-power` 的 `main`。
-4. 配置上述生产环境变量并部署 Node.js 22。
+3. Vercel Git Integration 指向 `nirobotics/cyber-power` 的 `main`。
+4. 使用 Node.js 22 部署。
 5. 将 `power.team8214.com` alias 到生产 deployment。
-6. 验证飞书登录、Cookie、真实日志、错误文件、区间拖动、主题切换、移动端和离线刷新。
+6. 验证匿名首页、真实日志、错误文件、区间拖动、主题切换、移动端和离线刷新。

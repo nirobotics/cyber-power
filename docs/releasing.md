@@ -12,6 +12,8 @@
 
 已经发布的版本不可覆盖。修改已有版本的 JAR、POM、module metadata、校验文件或 Release asset 都应当让校验失败；修复必须发布新版本。
 
+当前 Maven 坐标为 `com.team8214.cyberpower:cyberpower-java`。旧坐标下已经发布的目录和 metadata 只读保留；发布工具只向当前坐标追加新版本，不移动或重建旧制品。
+
 `v2026.2.2` 是统一发布工具链建立时对既有不可变 runtime JAR 的一次历史补发。该 JAR 不重新构建或覆盖，以 Release 公布的 SHA-256 为准；从下一个版本开始，候选制品必须由对应 tag 中的工具链准备并通过完整一致性门禁。
 
 ## 准备新版本
@@ -49,7 +51,7 @@ Release 说明必须包含：
 - 本版主要变更；
 - EnergyLogger 数据契约版本；
 - WPILib 版本；
-- Maven 坐标 `com.nextinnovation.cyberpower:cyberpower-java:<VERSION>`；
+- Maven 坐标 `com.team8214.cyberpower:cyberpower-java:<VERSION>`；
 - 在线安装 URL 和 Gradle 命令；
 - 离线 JAR 安装步骤；
 - 在线 vendordep 与离线 JAR 不得同时启用的警告；
