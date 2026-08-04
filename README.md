@@ -1,6 +1,9 @@
 # cyber-power
 
-Cyber Power 在浏览器中分析 FRC 机器人的 `.wpilog` 能量数据。无需登录，日志不会上传服务器。
+![Next Innovation](https://img.shields.io/badge/Next-Innovation-8A2BE2?labelColor=555555&style=flat)
+![Lang zh-CN](https://img.shields.io/badge/Lang-zh--CN-2DBA4E?labelColor=555555&style=flat)
+
+Cyber Power 是面向 FRC 的本地能量分析工具，用于读取机器人库生成的 `.wpilog`。它按整机、子系统和电机展示电流、功率、耗电与电池表现，并提供电机效率、减速比建议、限流模拟和数据质量检查。机器人端安装 vendordep、接入日志后端并注册电机，运行后把日志拖入网页即可分析；无需登录，文件不会上传服务器。
 
 [打开 Cyber Power](https://power.team8214.com)
 
@@ -13,8 +16,6 @@ https://power.team8214.com/vendordep/CyberPower.json
 ```
 
 ## 示例
-
-先从下面三种日志后端中选择一种。
 
 ### WPILib DataLog
 
@@ -30,6 +31,12 @@ EnergyLogger.getInstance()
 ```
 
 ### AdvantageKit
+
+先安装 AdvantageKit：
+
+```text
+https://github.com/Mechanical-Advantage/AdvantageKit/releases/latest/download/AdvantageKit.json
+```
 
 ```java
 import com.team8214.cyberpower.EnergyLogger;
@@ -145,15 +152,3 @@ EnergyLogger.getInstance().periodicRobot();
 ```
 
 Follower 自动继承 Leader 的电机型号和减速比。只有 Supply Current 的设备使用 `registerMotor(name, connected, supplyCurrent)`。
-
-## 本地开发
-
-需要 Node.js 22 和 pnpm 11。
-
-```powershell
-pnpm install
-pnpm dev
-pnpm typecheck
-pnpm test
-pnpm build
-```
