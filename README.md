@@ -3,7 +3,7 @@
 ![Next Innovation](https://img.shields.io/badge/Next-Innovation-8A2BE2?labelColor=555555&style=flat)
 ![Lang zh-CN](https://img.shields.io/badge/Lang-zh--CN-2DBA4E?labelColor=555555&style=flat)
 
-Cyber Power 是面向 FRC 的本地能量分析工具，用于读取机器人库生成的 `.wpilog`。它按整机、子系统和电机展示电流、功率、耗电与电池表现，并提供电机效率、减速比建议、限流模拟和数据质量检查。机器人端安装 vendordep、接入日志后端并注册电机，运行后把日志拖入网页即可分析；无需登录，文件不会上传服务器。
+Cyber Power 是面向 FRC 的本地能量分析工具，用于读取机器人库生成的 `.wpilog`。它按整机、子系统和电机展示电流、功率、耗电与电池表现，并提供电机效率、减速比建议、限流模拟和数据质量检查。机器人端安装 vendordep、接入日志后端并注册电机，运行后把日志拖入网页即可分析。
 
 [打开 Cyber Power](https://power.team8214.com)
 
