@@ -1,5 +1,5 @@
 - Cyber Power Web 必须完全匿名使用，不保留飞书、Supabase、账户、session 或权限验证链路；日志和分析结果始终只留在浏览器本地。
-- README 必须保留 `Next Innovation` 与 `Lang zh-CN` badge，只保留简洁准确的定位、功能、基本用法、安装与示例；不写本地开发、“给人看/给 AI 看”分类、维护原则或当前版本限定介绍。
+- README 必须保留 `Next Innovation` 与 `Lang zh-CN` badge，只保留简洁准确的定位、功能、基本用法、安装与示例；不写本地开发、“给人看/给 AI 看”分类、维护原则、当前版本限定介绍，也不在产品介绍中说明无需登录或文件不上传服务器。
 - Web 页脚版本、vendordep descriptor 版本与 Java 制品版本必须保持一致；今后每次版本号更新都必须创建 GitHub Release，并附带对应的 vendordep JSON 与 JAR，同时在 Release/README 中说明在线 vendordep 安装和离线 JAR 使用方法。
 - 8214 当前使用无通信能力的 PDP 2.0，生产日志不会提供可用的 PDP/PDH 总电流或总功率；其电池分析只能使用 Battery Voltage 与已注册电机 Supply Current 总和，界面必须明确标为“已注册电机”口径。其他队伍可在 V2.4 显式注册同步 PDH/PDP 整机总电流；无论使用哪种口径，都不得把局部压降代理表述成纯电池内阻、SOC 或容量。
 - Cyber Power vendordep 只允许写入 EnergyLogger V2，彻底舍弃 V1 写入 API 与双写路径；网页端必须继续兼容读取既有 V1 日志，并同时支持 V2。
