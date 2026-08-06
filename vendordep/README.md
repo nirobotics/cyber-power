@@ -24,15 +24,16 @@ implementation wpi.java.vendor.java()
 EnergyLogger logger = EnergyLogger.getInstance();
 EnergySubsystem subsystem = logger.createSubsystem("shooter");
 
-subsystem.registerMotor(name, type, reduction, connected, supply, stator, rotorVelocity);
-subsystem.registerFollowerMotor(name, leaderName, connected, supply);
-subsystem.registerMotor(name, connected, supply); // Supply Current only
+subsystem.registerMotor(
+    new MotorConfig(name, type, reduction, connected, supply, stator, rotorVelocity),
+    new FollowerMotorConfig(followerName, followerConnected, followerSupply));
+subsystem.registerMotor(new MotorConfig(name, connected, supply)); // Supply Current only
 
 subsystem.periodic(state);
 logger.periodicRobot();
 ```
 
-`analysisReduction` 是电机转数除以被分析输出的转数。Follower 必须与 Leader 使用相同电机型号和减速比。
+`registerMotor` 可继续传入多个 `FollowerMotorConfig`。`analysisReduction` 是电机转数除以被分析输出的转数；Follower 自动继承第一台电机的型号和减速比。
 
 Supply Current 取电为正、回流为负；Stator Current 驱动为正、再生制动为负。Rotor Velocity 使用原生 `rad/s`。
 

@@ -116,6 +116,8 @@ EnergyLogger.getInstance()
 ```java
 import com.team8214.cyberpower.EnergyLogger;
 import com.team8214.cyberpower.EnergySubsystem;
+import com.team8214.cyberpower.FollowerMotorConfig;
+import com.team8214.cyberpower.MotorConfig;
 import com.team8214.cyberpower.MotorType;
 
 private final EnergySubsystem energy =
@@ -123,19 +125,18 @@ private final EnergySubsystem energy =
 
 public Shooter() {
   energy.registerMotor(
-      "flywheel",
-      MotorType.KRAKEN_X60_FOC,
-      FLYWHEEL_REDUCTION,
-      () -> inputs.connected,
-      () -> inputs.supplyCurrentAmps,
-      () -> inputs.statorCurrentAmps,
-      () -> inputs.rotorVelocityRadPerSec);
-
-  energy.registerFollowerMotor(
-      "flywheelFollower",
-      "flywheel",
-      () -> inputs.followerConnected,
-      () -> inputs.followerSupplyCurrentAmps);
+      new MotorConfig(
+          "flywheel",
+          MotorType.KRAKEN_X60_FOC,
+          FLYWHEEL_REDUCTION,
+          () -> inputs.connected,
+          () -> inputs.supplyCurrentAmps,
+          () -> inputs.statorCurrentAmps,
+          () -> inputs.rotorVelocityRadPerSec),
+      new FollowerMotorConfig(
+          "flywheelFollower",
+          () -> inputs.followerConnected,
+          () -> inputs.followerSupplyCurrentAmps));
 }
 
 @Override
@@ -151,4 +152,4 @@ public void periodic() {
 EnergyLogger.getInstance().periodicRobot();
 ```
 
-Follower 自动继承 Leader 的电机型号和减速比。只有 Supply Current 的设备使用 `registerMotor(name, connected, supplyCurrent)`。
+可以继续传入多个 `FollowerMotorConfig`；Follower 自动继承第一台电机的型号和减速比。只有 Supply Current 的设备使用 `registerMotor(new MotorConfig(name, connected, supplyCurrent))`。

@@ -1,8 +1,10 @@
 package com.team8214.cyberpower;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import java.util.function.DoubleSupplier;
 
@@ -30,94 +32,49 @@ public final class EnergySubsystem {
   }
 
   /**
-   * Registers an independently controlled motor or a homogeneous motor-group leader.
+   * Atomically registers an independently controlled motor and any homogeneous followers.
+   * Followers inherit the motor's analysis metadata and are stored in argument order.
    *
-   * @param name unique motor name inside this subsystem
-   * @param type known motor model
-   * @param analysisReduction motor rotations per analyzed output rotation; values above one are
-   *     reductions
-   * @param connected whether this motor's telemetry is connected for the current sample
-   * @param supplyCurrentAmps battery-side Supply Current in amperes, positive when drawing from the
-   *     DC bus and negative when returning current to it; this sign must not depend on rotor direction
-   * @param statorCurrentAmps Stator Current in amperes, positive for motoring and negative for
-   *     regenerative braking; this sign must not depend on rotor direction
-   * @param rawRotorVelocityRadPerSec signed raw rotor velocity in radians per second
+   * @param motor independently controlled motor or motor-group leader
+   * @param followers zero or more followers in the same homogeneous motor group
    */
-  public void registerMotor(
-      String name,
-      MotorType type,
-      double analysisReduction,
-      BooleanSupplier connected,
-      DoubleSupplier supplyCurrentAmps,
-      DoubleSupplier statorCurrentAmps,
-      DoubleSupplier rawRotorVelocityRadPerSec) {
+  public void registerMotor(MotorConfig motor, FollowerMotorConfig... followers) {
     requireConfigurable();
-    String validatedName = validateNewMotor(name);
-    motors.add(
+    MotorConfig validatedMotor = Objects.requireNonNull(motor, "motor");
+    FollowerMotorConfig[] validatedFollowers = Objects.requireNonNull(followers, "followers");
+
+    Set<String> names = new HashSet<>();
+    for (MotorRegistration registeredMotor : motors) {
+      names.add(registeredMotor.name);
+    }
+    validateUniqueName(validatedMotor.name, names);
+    for (int index = 0; index < validatedFollowers.length; index++) {
+      FollowerMotorConfig follower =
+          Objects.requireNonNull(validatedFollowers[index], "followers[" + index + "]");
+      validateUniqueName(follower.name, names);
+    }
+
+    List<MotorRegistration> registrations = new ArrayList<>(validatedFollowers.length + 1);
+    registrations.add(
         MotorRegistration.leader(
-            validatedName,
-            Objects.requireNonNull(type, "type"),
-            validateAnalysisReduction(analysisReduction),
-            Objects.requireNonNull(connected, "connected"),
-            Objects.requireNonNull(supplyCurrentAmps, "supplyCurrentAmps"),
-            Objects.requireNonNull(statorCurrentAmps, "statorCurrentAmps"),
-            Objects.requireNonNull(rawRotorVelocityRadPerSec, "rawRotorVelocityRadPerSec")));
-  }
-
-  /**
-   * Registers a motor for connection-aware Supply Current logging without model analysis.
-   *
-   * @param name unique motor name inside this subsystem
-   * @param connected whether this motor's telemetry is connected for the current sample
-   * @param supplyCurrentAmps battery-side Supply Current in amperes, positive when drawing from the
-   *     DC bus and negative when returning current to it; this sign must not depend on rotor direction
-   */
-  public void registerMotor(
-      String name, BooleanSupplier connected, DoubleSupplier supplyCurrentAmps) {
-    requireConfigurable();
-    String validatedName = validateNewMotor(name);
-    motors.add(
-        MotorRegistration.basic(
-            validatedName,
-            Objects.requireNonNull(connected, "connected"),
-            Objects.requireNonNull(supplyCurrentAmps, "supplyCurrentAmps")));
-  }
-
-  /**
-   * Registers a homogeneous follower. Its Stator Current and rotor velocity are inherited from
-   * the named leader for analysis and are not sampled from the robot.
-   *
-   * @param name unique motor name inside this subsystem
-   * @param leaderName previously registered leader motor name
-   * @param connected whether this motor's telemetry is connected for the current sample
-   * @param supplyCurrentAmps battery-side Supply Current in amperes, positive when drawing from the
-   *     DC bus and negative when returning current to it; this sign must not depend on rotor direction
-   */
-  public void registerFollowerMotor(
-      String name,
-      String leaderName,
-      BooleanSupplier connected,
-      DoubleSupplier supplyCurrentAmps) {
-    requireConfigurable();
-    String validatedName = validateNewMotor(name);
-    String validatedLeaderName = EnergyLogger.requireName(leaderName, "Leader motor name");
-    MotorRegistration leader = findMotor(validatedLeaderName);
-    if (leader == null) {
-      throw new IllegalArgumentException(
-          "Follower " + validatedName + " references an unregistered leader " + validatedLeaderName);
-    }
-    if (!leader.isLeader()) {
-      throw new IllegalArgumentException(
-          "Follower " + validatedName + " cannot follow follower " + validatedLeaderName);
-    }
-    motors.add(
+            validatedMotor.name,
+            validatedMotor.type,
+            validatedMotor.analysisReduction,
+            validatedMotor.connected,
+            validatedMotor.supplyCurrentAmps,
+            validatedMotor.statorCurrentAmps,
+            validatedMotor.rawRotorVelocityRadPerSec));
+    for (FollowerMotorConfig follower : validatedFollowers) {
+      registrations.add(
         MotorRegistration.follower(
-            validatedName,
-            leader.type,
-            leader.analysisReduction,
-            validatedLeaderName,
-            Objects.requireNonNull(connected, "connected"),
-            Objects.requireNonNull(supplyCurrentAmps, "supplyCurrentAmps")));
+              follower.name,
+              validatedMotor.type,
+              validatedMotor.analysisReduction,
+              validatedMotor.name,
+              follower.connected,
+              follower.supplyCurrentAmps));
+    }
+    motors.addAll(registrations);
   }
 
   /** Records one independently timestamped sample using an enum state name. */
@@ -204,30 +161,11 @@ public final class EnergySubsystem {
     logger.requireConfigurable();
   }
 
-  private String validateNewMotor(String value) {
-    String validatedName = EnergyLogger.requireName(value, "Motor name");
-    if (findMotor(validatedName) != null) {
+  private void validateUniqueName(String motorName, Set<String> names) {
+    if (!names.add(motorName)) {
       throw new IllegalArgumentException(
-          "Duplicate motor name " + validatedName + " in subsystem " + name);
+          "Duplicate motor name " + motorName + " in subsystem " + name);
     }
-    return validatedName;
-  }
-
-  private MotorRegistration findMotor(String motorName) {
-    for (MotorRegistration motor : motors) {
-      if (motor.name.equals(motorName)) {
-        return motor;
-      }
-    }
-    return null;
-  }
-
-  private static double validateAnalysisReduction(double value) {
-    if (!Double.isFinite(value) || value <= 0.0) {
-      throw new IllegalArgumentException(
-          "Analysis reduction must be finite and greater than zero");
-    }
-    return value;
   }
 
   private static double finiteOrNaN(double value) {
@@ -270,7 +208,7 @@ public final class EnergySubsystem {
     static MotorRegistration leader(
         String name,
         MotorType type,
-        double analysisReduction,
+        Double analysisReduction,
         BooleanSupplier connected,
         DoubleSupplier supplyCurrentAmps,
         DoubleSupplier statorCurrentAmps,
@@ -284,12 +222,6 @@ public final class EnergySubsystem {
           supplyCurrentAmps,
           statorCurrentAmps,
           rawRotorVelocityRadPerSec);
-    }
-
-    static MotorRegistration basic(
-        String name, BooleanSupplier connected, DoubleSupplier supplyCurrentAmps) {
-      return new MotorRegistration(
-          name, null, null, null, connected, supplyCurrentAmps, null, null);
     }
 
     static MotorRegistration follower(

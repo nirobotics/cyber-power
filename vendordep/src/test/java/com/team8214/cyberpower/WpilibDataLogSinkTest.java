@@ -89,29 +89,29 @@ class WpilibDataLogSinkTest {
               .registerRobotTotalCurrentSource(() -> 71.0);
       EnergySubsystem drive = logger.createSubsystem("drive");
       drive.registerMotor(
-          "leftLeader",
-          MotorType.NEO,
-          6.75,
-          () -> true,
-          () -> driveCurrent[0],
-          () -> -48.0,
-          () -> driveVelocity[0]);
-      drive.registerFollowerMotor(
-          "leftFollower",
-          "leftLeader",
-          () -> true,
-          () -> followerCurrent[0]);
-      drive.registerMotor("intake", () -> true, () -> 5.0);
-      drive.registerFollowerMotor("intakeFollower", "intake", () -> true, () -> 4.0);
+          new MotorConfig(
+              "leftLeader",
+              MotorType.NEO,
+              6.75,
+              () -> true,
+              () -> driveCurrent[0],
+              () -> -48.0,
+              () -> driveVelocity[0]),
+          new FollowerMotorConfig(
+              "leftFollower", () -> true, () -> followerCurrent[0]));
+      drive.registerMotor(
+          new MotorConfig("intake", () -> true, () -> 5.0),
+          new FollowerMotorConfig("intakeFollower", () -> true, () -> 4.0));
       EnergySubsystem shooter = logger.createSubsystem("shooter");
       shooter.registerMotor(
-          "flywheel",
-          MotorType.KRAKEN_X60_FOC,
-          1.25,
-          () -> true,
-          () -> shooterCurrent[0],
-          () -> 30.0,
-          () -> 95.0);
+          new MotorConfig(
+              "flywheel",
+              MotorType.KRAKEN_X60_FOC,
+              1.25,
+              () -> true,
+              () -> shooterCurrent[0],
+              () -> 30.0,
+              () -> 95.0));
 
       drive.periodic("IDLE");
       clock.set(1_037_000L);
