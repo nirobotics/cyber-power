@@ -14,3 +14,7 @@ coverage/
 playwright-report/
 test-results/
 *.local
+/.wrangler/
+/cloudflare/.production-assets/
+/cloudflare/.production-assets-*/
+/cloudflare/.production-manifest.json

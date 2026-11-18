@@ -1,0 +1,35 @@
+name: Cloudflare production
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cyber-power-cloudflare-production
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    if: github.repository == 'nirobotics/cyber-power' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      WRANGLER_SEND_METRICS: 'false'
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: '22.23.4'
+      - name: Install the locked application dependencies
+        run: npm exec --yes --package=pnpm@11.5.0 -- pnpm install --frozen-lockfile
+      - run: npm ci --prefix cloudflare/tools --ignore-scripts --no-audit --no-fund
+      - run: node cloudflare/prepare-production.mjs
+      - name: Dry-run the exact assets-only configuration
+        run: node cloudflare/tools/node_modules/wrangler/bin/wrangler.js versions upload --config wrangler.jsonc --dry-run
+      - name: Publish and independently verify production
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_POWER_PUBLISH_TOKEN }}
+        run: node cloudflare/publish-production.mjs

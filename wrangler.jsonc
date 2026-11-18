@@ -1,0 +1,13 @@
+{
+  "name": "cyber-power",
+  "account_id": "2ca8df5c9754fb7e3f37d08c597535e0",
+  "compatibility_date": "2026-11-14",
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": false },
+  "assets": {
+    "directory": "./cloudflare/.production-assets",
+    "html_handling": "drop-trailing-slash",
+    "not_found_handling": "none"
+  }
+}

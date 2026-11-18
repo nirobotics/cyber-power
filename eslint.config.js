@@ -12,12 +12,14 @@ export default tseslint.config(
       ".react-router",
       ".vercel",
       "node_modules",
+      ".wrangler",
+      "cloudflare/.production-assets*/**",
     ],
   },
   js.configs.recommended,
   ...tseslint.configs.recommended,
   {
-    files: ["scripts/**/*.mjs"],
+    files: ["scripts/**/*.mjs", "cloudflare/*.mjs"],
     languageOptions: {
       ecmaVersion: 2022,
       globals: globals.node,
