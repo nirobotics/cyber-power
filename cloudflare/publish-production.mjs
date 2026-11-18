@@ -96,8 +96,21 @@ async function main(){
     let unknown=false;
     try{await api('/deployments',{strategy:'percentage',versions:[{version_id:id,percentage:100}],annotations:{'workers/message':msg}});}
     catch(e){unknown=true;console.error(e.message);}
-    const active=await current();
-    assert(active.id!==original.id&&active.versions[0].version_id===id&&active.annotations?.['workers/message']===msg,'PUBLISH_UNCONFIRMED_READ_ONLY_NO_REPLAY');
+    // Deployment creation can return before the independently read deployment
+    // list catches up. Only poll GET; never issue the write twice.
+    const deadline=Date.now()+60000;
+    let active, observations=0;
+    while(Date.now()<deadline){
+      const seen=await current(); observations++;
+      if(seen.id!==original.id){
+        assert(seen.versions[0].version_id===id&&seen.annotations?.['workers/message']===msg,'UNEXPECTED_NEW_DEPLOYMENT_DURING_READBACK');
+        active=seen;break;
+      }
+      assert.equal(seen.versions[0].version_id,oldVersion,'OLD_DEPLOYMENT_DRIFT_DURING_READBACK');
+      await new Promise(resolve=>setTimeout(resolve,2000));
+    }
+    assert(active,'PUBLISH_UNCONFIRMED_READ_ONLY_NO_REPLAY');
+    console.log(JSON.stringify({deployReadback:'confirmed',observations,writeReplays:0}));
     await unchangedConfig();
     await formalSmoke();
     console.log(JSON.stringify({status:'main-push-cloudflare-live',worker,gitSha:sha,version:id,previousVersion:oldVersion,deployment:active.id,percentage:100,unknownResponseConfirmed:unknown,formalSmoke:true}));
